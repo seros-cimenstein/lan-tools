@@ -1,0 +1,17 @@
+[Unit]
+Description=lanclip - LAN universal clipboard
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/lib/lanclip/lanclip.py
+Restart=on-failure
+RestartSec=3
+# X11 hosts:
+#Environment=DISPLAY=:0
+#Environment=XAUTHORITY=%h/.Xauthority
+# Wayland host:
+#Environment=WAYLAND_DISPLAY=wayland-1
+#Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=default.target
