@@ -1,0 +1,114 @@
+# lanmouse
+
+`lanmouse` is a small Linux LAN mouse-forwarding tool for one physical mouse.
+The keyboard decides where the mouse goes: when the Bluetooth keyboard profile
+is connected to `laptop`, `desktop`, or another receiver, that machine reports its
+keyboard presence to the sender and the sender forwards mouse events there.
+When the keyboard is local on the sender, the mouse is ungrabbed and behaves
+normally on the laptop.
+
+The sender reads the physical evdev mouse, grabs it only while forwarding to a
+remote receiver, and streams safe mouse events over TCP. Receivers authenticate
+the sender, create a `/dev/uinput` virtual mouse, and inject the received
+events.
+
+## Files and install paths
+
+Install:
+
+- `lanmouse.py` to `/usr/local/lib/lanmouse/lanmouse.py`
+- one systemd unit to `/etc/systemd/system/lanmouse-sender.service` or
+  `/etc/systemd/system/lanmouse-receiver.service`
+- config to `/etc/lanmouse/config.json`
+
+Both units run as root system services because evdev grabs and uinput require
+root or equivalent device permissions.
+
+Enable one role per machine:
+
+```sh
+systemctl daemon-reload
+systemctl enable --now lanmouse-sender.service
+systemctl enable --now lanmouse-receiver.service
+```
+
+## Sender config
+
+Example for the Arch laptop with the physical `Logitech M215` mouse:
+
+```json
+{
+  "role": "sender",
+  "name": "laptop",
+  "token": "change-this-long-random-token",
+  "keyboard_match": "Designer Compact Keyboard",
+  "mouse_match": "Logitech M215",
+  "control_port": 47701,
+  "receivers": [
+    {"name": "laptop", "host": "laptop.local", "port": 47702},
+    {"name": "desktop", "host": "desktop.local", "port": 47702}
+  ]
+}
+```
+
+Required common keys:
+
+- `role`: `sender` or `receiver`
+- `name`: this machine's lanmouse name
+- `token`: shared secret used for HTTP and TCP authentication
+- `keyboard_match`: substring matched against `N: Name=` lines in
+  `/proc/bus/input/devices`
+
+Sender-only keys:
+
+- `mouse_match`: substring matched against `/sys/class/input/event*/device/name`
+- `control_port`: HTTP control port, default `47701`
+- `receivers`: list of `{ "name", "host", "port" }`
+
+## Receiver config
+
+Example for `laptop`:
+
+```json
+{
+  "role": "receiver",
+  "name": "laptop",
+  "token": "change-this-long-random-token",
+  "keyboard_match": "Designer Compact Keyboard",
+  "listen_port": 47702,
+  "sender_host": "laptop.local",
+  "sender_control_port": 47701
+}
+```
+
+Receiver-only keys:
+
+- `listen_port`: TCP mouse stream port, default `47702`
+- `sender_host`: sender hostname or IP
+- `sender_control_port`: sender HTTP control port, default `47701`
+
+## Firewall
+
+Open only the needed LAN paths:
+
+- sender: allow TCP `47701` from receiver machines
+- receivers: allow TCP `47702` from the sender machine
+
+The TCP stream starts with the shared token and the HTTP control endpoint
+requires `X-Lanmouse-Token`, but the protocol is not encrypted. Use this only on
+a trusted LAN or inside a private VPN.
+
+## Manual checks
+
+Status on the sender:
+
+```sh
+curl -H 'X-Lanmouse-Token: change-this-long-random-token' \
+  http://127.0.0.1:47701/status
+```
+
+Run in debug mode with a temporary config:
+
+```sh
+python3 /usr/local/lib/lanmouse/lanmouse.py --config /etc/lanmouse/config.json --debug
+```
