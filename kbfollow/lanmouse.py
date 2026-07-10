@@ -27,6 +27,9 @@ from typing import Any
 
 
 CONFIG_PATH = "/etc/lanmouse/config.json"
+DEFAULT_SETTLE_SECONDS = 1.2
+PRESENCE_ARBITER_INTERVAL = 0.2
+CONNECT_FAILSAFE_SECONDS = 3.0
 
 EV_SYN = 0
 EV_KEY = 1
@@ -127,6 +130,16 @@ def require_port(config: dict[str, Any], key: str, default: int | None = None) -
     return value
 
 
+def require_seconds(config: dict[str, Any], key: str, default: float) -> float:
+    value = config.get(key, default)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ConfigError(f"{key} must be a number of seconds")
+    seconds = float(value)
+    if seconds < 0:
+        raise ConfigError(f"{key} must be >= 0")
+    return seconds
+
+
 def load_config(path: str) -> dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -149,6 +162,7 @@ def load_config(path: str) -> dict[str, Any]:
     if role == "sender":
         require_string(raw, "mouse_match")
         require_port(raw, "control_port", 47701)
+        require_seconds(raw, "settle_seconds", DEFAULT_SETTLE_SECONDS)
         receivers = raw.get("receivers")
         if not isinstance(receivers, list) or not receivers:
             raise ConfigError("receivers must be a non-empty list")
@@ -210,11 +224,14 @@ def safe_close(sock: socket.socket | None) -> None:
 
 
 class SenderState:
-    def __init__(self) -> None:
+    def __init__(self, receiver_names: set[str]) -> None:
         self._lock = threading.Lock()
         self._target = "local"
         self._mouse_found = False
-        self._keyboard_local = False
+        self._presence = {"local": False}
+        for name in sorted(receiver_names):
+            self._presence[name] = False
+        self._presence_changed_at = time.monotonic()
 
     def get_target(self) -> str:
         with self._lock:
@@ -234,18 +251,41 @@ class SenderState:
             self._mouse_found = found
         logging.info("mouse_found -> %s", found)
 
-    def set_keyboard_local(self, present: bool) -> bool:
+    def set_presence(self, name: str, present: bool) -> bool:
         with self._lock:
-            old = self._keyboard_local
-            self._keyboard_local = present
-        return old != present
+            old = self._presence[name]
+            if old == present:
+                return False
+            self._presence[name] = present
+            self._presence_changed_at = time.monotonic()
+        logging.debug("keyboard presence %s -> %s", name, present)
+        return True
+
+    def arbitrate_presence(self, settle_seconds: float) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if now - self._presence_changed_at < settle_seconds:
+                return
+            present = [name for name, is_present in self._presence.items() if is_present]
+            if len(present) != 1:
+                return
+            target = present[0]
+            if self._target == target:
+                return
+            self._target = target
+        logging.info("target -> %s", target)
+
+    def set_keyboard_local(self, present: bool) -> bool:
+        return self.set_presence("local", present)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            presence = dict(self._presence)
             return {
                 "target": self._target,
                 "mouse_found": self._mouse_found,
-                "keyboard_local": self._keyboard_local,
+                "keyboard_local": presence["local"],
+                "presence": presence,
             }
 
 
@@ -315,14 +355,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send_error_json(HTTPStatus.NOT_FOUND, "unknown receiver")
             return
 
-        if present:
-            self.server.state.set_target(name)
-        else:
-            logging.debug(
-                "keyboard disappeared on %s; target unchanged (%s)",
-                name,
-                self.server.state.get_target(),
-            )
+        self.server.state.set_presence(name, present)
 
         self._send_json(HTTPStatus.OK, {"ok": True, "target": self.server.state.get_target()})
 
@@ -349,22 +382,28 @@ class SenderKeyboardWatcher(threading.Thread):
         self.stop_event = stop_event
 
     def run(self) -> None:
-        previous: bool | None = None
         while not self.stop_event.is_set():
             present = keyboard_present(self.match)
-            changed = self.state.set_keyboard_local(present)
-            if previous is None:
-                previous = present
-            elif changed and present:
-                self.state.set_target("local")
-                previous = present
-            elif changed:
-                logging.debug(
-                    "local keyboard disappeared; target unchanged (%s)",
-                    self.state.get_target(),
-                )
-                previous = present
+            self.state.set_keyboard_local(present)
             self.stop_event.wait(0.5)
+
+
+class PresenceArbiter(threading.Thread):
+    def __init__(
+        self,
+        state: SenderState,
+        settle_seconds: float,
+        stop_event: threading.Event,
+    ) -> None:
+        super().__init__(name="presence-arbiter", daemon=True)
+        self.state = state
+        self.settle_seconds = settle_seconds
+        self.stop_event = stop_event
+
+    def run(self) -> None:
+        while not self.stop_event.is_set():
+            self.state.arbitrate_presence(self.settle_seconds)
+            self.stop_event.wait(PRESENCE_ARBITER_INTERVAL)
 
 
 class MouseForwarder(threading.Thread):
@@ -386,6 +425,10 @@ class MouseForwarder(threading.Thread):
         self.grabbed = False
         self.sock: socket.socket | None = None
         self.sock_target: str | None = None
+        self.pressed_buttons: set[int] = set()
+        self.connect_failure_target: str | None = None
+        self.connect_failure_since: float | None = None
+        self.connect_failure_error: BaseException | None = None
         self.cleanup_lock = threading.Lock()
         atexit.register(self.cleanup)
 
@@ -400,11 +443,33 @@ class MouseForwarder(threading.Thread):
                     pass
                 self.fd = None
 
+    def _release_pressed_buttons_locked(self) -> None:
+        if self.sock is None:
+            self.pressed_buttons.clear()
+            return
+        if not self.pressed_buttons:
+            return
+
+        payload = bytearray()
+        for code in sorted(self.pressed_buttons):
+            payload.extend(struct.pack(WIRE_EVENT_FORMAT, EV_KEY, code, 0))
+        payload.extend(struct.pack(WIRE_EVENT_FORMAT, EV_SYN, 0, 0))
+
+        try:
+            self.sock.sendall(bytes(payload))
+        except OSError as exc:
+            logging.debug("button release send failed for %s: %s", self.sock_target, exc)
+        finally:
+            self.pressed_buttons.clear()
+
     def _close_connection_locked(self) -> None:
         if self.sock is not None:
+            self._release_pressed_buttons_locked()
             safe_close(self.sock)
             self.sock = None
             self.sock_target = None
+        else:
+            self.pressed_buttons.clear()
 
     def _ungrab_locked(self) -> None:
         if self.fd is None or not self.grabbed:
@@ -449,19 +514,69 @@ class MouseForwarder(threading.Thread):
         sock.settimeout(None)
         return sock
 
-    def _ensure_connection(self, target: str) -> None:
-        if self.sock is not None and self.sock_target == target:
-            return
+    def _reset_connect_failures(self) -> None:
+        self.connect_failure_target = None
+        self.connect_failure_since = None
+        self.connect_failure_error = None
+
+    def _note_connect_failure(
+        self,
+        target: str,
+        exc: BaseException,
+        started_at: float,
+    ) -> bool:
+        if self.connect_failure_target != target or self.connect_failure_since is None:
+            self.connect_failure_target = target
+            self.connect_failure_since = started_at
+        self.connect_failure_error = exc
+
+        elapsed = time.monotonic() - self.connect_failure_since
+        if elapsed < CONNECT_FAILSAFE_SECONDS:
+            return False
+
+        logging.error(
+            "receiver %s unavailable; reverting to local: %s",
+            target,
+            exc,
+        )
+        self.state.set_target("local")
         self._close_connection()
-        sock = self._connect_once(target)
+        self._ungrab()
+        self._reset_connect_failures()
+        return True
+
+    def _ensure_connection_for_tick(self, target: str) -> bool:
+        if self.sock is not None and self.sock_target == target:
+            self._reset_connect_failures()
+            return True
+
+        self._close_connection()
+        started_at = time.monotonic()
+        try:
+            sock = self._connect_once(target)
+        except OSError as exc:
+            self._note_connect_failure(target, exc, started_at)
+            return False
+
+        current_target = self.state.get_target()
+        if self.stop_event.is_set() or current_target != target:
+            safe_close(sock)
+            self._reset_connect_failures()
+            if current_target == "local":
+                self._ungrab()
+            return False
+
         with self.cleanup_lock:
             self.sock = sock
             self.sock_target = target
+        self._reset_connect_failures()
         logging.info("connected to receiver %s", target)
+        return True
 
     def _sync_target(self) -> str:
         target = self.state.get_target()
         if target == "local":
+            self._reset_connect_failures()
             self._close_connection()
             self._ungrab()
             return target
@@ -469,51 +584,58 @@ class MouseForwarder(threading.Thread):
         if target not in self.receivers:
             logging.error("unknown target %s; reverting to local", target)
             self.state.set_target("local")
+            self._reset_connect_failures()
             self._close_connection()
             self._ungrab()
             return "local"
 
         if not self._grab():
             self.state.set_target("local")
+            self._reset_connect_failures()
             self._close_connection()
             self._ungrab()
             return "local"
 
-        if self.sock_target is not None and self.sock_target != target:
-            self._close_connection()
+        if not self._ensure_connection_for_tick(target):
+            if self.state.get_target() == "local":
+                self._reset_connect_failures()
+                self._close_connection()
+                self._ungrab()
+            return "local"
 
         return target
 
     def _send_payload(self, target: str, payload: bytes) -> None:
-        deadline = time.monotonic() + 3.0
-        last_error: BaseException | None = None
+        if self.state.get_target() != target:
+            return
+        with self.cleanup_lock:
+            sock = self.sock if self.sock_target == target else None
+        if sock is None:
+            return
 
-        while not self.stop_event.is_set():
-            if self.state.get_target() != target:
-                return
-            try:
-                self._ensure_connection(target)
-                if self.sock is None:
-                    raise OSError("connection disappeared")
-                self.sock.sendall(payload)
-                return
-            except OSError as exc:
-                last_error = exc
-                self._close_connection()
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                self.stop_event.wait(min(0.25, remaining))
-
-        if self.state.get_target() == target:
-            logging.error(
-                "receiver %s unavailable; reverting to local: %s",
-                target,
-                last_error,
-            )
-            self.state.set_target("local")
+        try:
+            sock.sendall(payload)
+        except OSError as exc:
+            self._apply_button_state_from_payload(payload, release_events=False)
             self._close_connection()
-            self._ungrab()
+            if self.state.get_target() == target:
+                self._note_connect_failure(target, exc, time.monotonic())
+            return
+
+        self._apply_button_state_from_payload(payload, release_events=True)
+        self._reset_connect_failures()
+
+    def _apply_button_state_from_payload(self, payload: bytes, *, release_events: bool) -> None:
+        with self.cleanup_lock:
+            limit = len(payload) - (len(payload) % WIRE_EVENT_SIZE)
+            for offset in range(0, limit, WIRE_EVENT_SIZE):
+                ev_type, code, value = struct.unpack_from(WIRE_EVENT_FORMAT, payload, offset)
+                if ev_type != EV_KEY or code not in ENABLED_BTN_CODES:
+                    continue
+                if value == 1:
+                    self.pressed_buttons.add(code)
+                elif value == 0 and release_events:
+                    self.pressed_buttons.discard(code)
 
     def _events_to_payload(self, data: bytes) -> bytes:
         out = bytearray()
@@ -664,28 +786,31 @@ class UInputMouse:
                 pass
             self.fd = None
 
-    def write_event(self, ev_type: int, code: int, value: int) -> None:
+    def write_event(self, ev_type: int, code: int, value: int) -> bool:
         if ev_type == EV_SYN:
             pass
         elif ev_type == EV_KEY:
             if code not in ENABLED_BTN_CODES:
-                return
+                return False
         elif ev_type == EV_REL:
             if code not in ENABLED_REL_CODES:
-                return
+                return False
         else:
-            return
+            return False
 
         event = struct.pack(INPUT_EVENT_FORMAT, 0, 0, ev_type, code, value)
         with self.lock:
             if self.fd is None:
-                return
+                return False
             try:
                 os.write(self.fd, event)
+                return True
             except BlockingIOError:
                 logging.warning("uinput write would block; dropped event")
+                return False
             except OSError as exc:
                 logging.error("uinput write failed: %s", exc)
+                return False
 
 
 class ReceiverEventServer(threading.Thread):
@@ -703,6 +828,7 @@ class ReceiverEventServer(threading.Thread):
         self.stop_event = stop_event
         self.listen_sock: socket.socket | None = None
         self.active_sock: socket.socket | None = None
+        self.pressed_buttons: set[int] = set()
         self.active_lock = threading.Lock()
         atexit.register(self.close)
 
@@ -710,18 +836,25 @@ class ReceiverEventServer(threading.Thread):
         if self.listen_sock is not None:
             safe_close(self.listen_sock)
             self.listen_sock = None
+        active_sock: socket.socket | None = None
         with self.active_lock:
             if self.active_sock is not None:
-                safe_close(self.active_sock)
+                active_sock = self.active_sock
                 self.active_sock = None
+            self._release_pressed_buttons_locked()
+        if active_sock is not None:
+            safe_close(active_sock)
 
     def _is_active(self, conn: socket.socket) -> bool:
         with self.active_lock:
             return self.active_sock is conn
 
     def _set_active(self, conn: socket.socket) -> None:
+        old: socket.socket | None = None
         with self.active_lock:
             old = self.active_sock
+            if old is not None and old is not conn:
+                self._release_pressed_buttons_locked()
             self.active_sock = conn
         if old is not None and old is not conn:
             safe_close(old)
@@ -729,7 +862,35 @@ class ReceiverEventServer(threading.Thread):
     def _clear_active(self, conn: socket.socket) -> None:
         with self.active_lock:
             if self.active_sock is conn:
+                self._release_pressed_buttons_locked()
                 self.active_sock = None
+
+    def _release_pressed_buttons_locked(self) -> None:
+        if not self.pressed_buttons:
+            return
+        codes = sorted(self.pressed_buttons)
+        self.pressed_buttons.clear()
+        for code in codes:
+            self.uinput.write_event(EV_KEY, code, 0)
+        self.uinput.write_event(EV_SYN, 0, 0)
+
+    def _apply_active_event(
+        self,
+        conn: socket.socket,
+        ev_type: int,
+        code: int,
+        value: int,
+    ) -> bool:
+        with self.active_lock:
+            if self.active_sock is not conn:
+                return False
+            written = self.uinput.write_event(ev_type, code, value)
+            if written and ev_type == EV_KEY and code in ENABLED_BTN_CODES:
+                if value == 1:
+                    self.pressed_buttons.add(code)
+                elif value == 0:
+                    self.pressed_buttons.discard(code)
+            return True
 
     def _read_token_line(self, conn: socket.socket) -> tuple[bytes | None, bytes]:
         buffer = bytearray()
@@ -766,9 +927,8 @@ class ReceiverEventServer(threading.Thread):
                     record = buffer[:WIRE_EVENT_SIZE]
                     buffer = buffer[WIRE_EVENT_SIZE:]
                     ev_type, code, value = struct.unpack(WIRE_EVENT_FORMAT, record)
-                    if not self._is_active(conn):
+                    if not self._apply_active_event(conn, ev_type, code, value):
                         return
-                    self.uinput.write_event(ev_type, code, value)
 
                 chunk = conn.recv(4096)
                 if not chunk:
@@ -873,8 +1033,9 @@ class ReceiverKeyboardReporter(threading.Thread):
 
 
 def run_sender(config: dict[str, Any], stop_event: threading.Event) -> int:
-    state = SenderState()
     receivers = {item["name"]: item for item in config["receivers"]}
+    state = SenderState(set(receivers))
+    settle_seconds = require_seconds(config, "settle_seconds", DEFAULT_SETTLE_SECONDS)
 
     control_server = ControlServer(
         ("0.0.0.0", config.get("control_port", 47701)),
@@ -890,6 +1051,7 @@ def run_sender(config: dict[str, Any], stop_event: threading.Event) -> int:
     )
 
     keyboard_watcher = SenderKeyboardWatcher(config["keyboard_match"], state, stop_event)
+    presence_arbiter = PresenceArbiter(state, settle_seconds, stop_event)
     mouse_forwarder = MouseForwarder(
         config["mouse_match"],
         receivers,
@@ -901,6 +1063,7 @@ def run_sender(config: dict[str, Any], stop_event: threading.Event) -> int:
     logging.info("control server listening on 0.0.0.0:%d", config.get("control_port", 47701))
     control_thread.start()
     keyboard_watcher.start()
+    presence_arbiter.start()
     mouse_forwarder.start()
 
     try:

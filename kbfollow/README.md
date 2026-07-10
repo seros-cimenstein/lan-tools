@@ -12,6 +12,16 @@ remote receiver, and streams safe mouse events over TCP. Receivers authenticate
 the sender, create a `/dev/uinput` virtual mouse, and inject the received
 events.
 
+## Behavior
+
+The sender keeps keyboard presence for `local` and every receiver. A target is
+changed only when exactly one host has been present for `settle_seconds`
+(default `1.2`); no-present and multi-present states leave the previous target
+sticky. When a remote target is selected, the sender grabs the mouse and opens
+the receiver connection immediately, reverting to local if connection setup
+keeps failing for about three seconds. Sender and receiver both release pressed
+mouse buttons on stream changes to avoid stuck buttons.
+
 ## Files and install paths
 
 Install:
@@ -63,6 +73,7 @@ Sender-only keys:
 
 - `mouse_match`: substring matched against `/sys/class/input/event*/device/name`
 - `control_port`: HTTP control port, default `47701`
+- `settle_seconds`: keyboard presence settle delay, default `1.2`
 - `receivers`: list of `{ "name", "host", "port" }`
 
 ## Receiver config
