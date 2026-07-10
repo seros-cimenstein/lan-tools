@@ -123,3 +123,38 @@ Run in debug mode with a temporary config:
 ```sh
 python3 /usr/local/lib/lanmouse/lanmouse.py --config /etc/lanmouse/config.json --debug
 ```
+
+## Indicator
+
+`lanmouse-indicator.py` is an optional user-session Tk indicator for each host.
+It polls the sender's `/status` endpoint and shows a small always-on-top marker
+in the bottom-left corner: green for this machine, gray for another target, and
+orange when the sender cannot be reached.
+
+Install it as a user service:
+
+```sh
+mkdir -p ~/.local/lib/lanmouse-indicator ~/.config/systemd/user
+cp lanmouse-indicator.py ~/.local/lib/lanmouse-indicator/
+cp lanmouse-indicator.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now lanmouse-indicator.service
+```
+
+Config lives at `~/.config/lanmouse-indicator/config.json` unless `--config` is
+used:
+
+```json
+{
+  "self": "laptop",
+  "status_url": "http://192.168.1.3:47701/status",
+  "token": "change-this-long-random-token",
+  "poll_interval": 1.0,
+  "margin": 8,
+  "labels": {"local": "laptop"}
+}
+```
+
+Use `"self": "local"` on the sender laptop. If the service starts before the
+display environment is available, uncomment the matching `DISPLAY` and
+`XAUTHORITY` lines in the user unit.
