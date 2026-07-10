@@ -27,8 +27,8 @@ from typing import Any
 
 
 CONFIG_PATH = "/etc/lanmouse/config.json"
-DEFAULT_SETTLE_SECONDS = 0.5
-PRESENCE_ARBITER_INTERVAL = 0.1
+DEFAULT_SETTLE_SECONDS = 1.2
+PRESENCE_ARBITER_INTERVAL = 0.2
 CONNECT_FAILSAFE_SECONDS = 3.0
 
 EV_SYN = 0
@@ -385,7 +385,7 @@ class SenderKeyboardWatcher(threading.Thread):
         while not self.stop_event.is_set():
             present = keyboard_present(self.match)
             self.state.set_keyboard_local(present)
-            self.stop_event.wait(0.15)
+            self.stop_event.wait(0.5)
 
 
 class PresenceArbiter(threading.Thread):
@@ -1029,7 +1029,7 @@ class ReceiverKeyboardReporter(threading.Thread):
                 else:
                     next_attempt = time.monotonic() + 5.0
 
-            self.stop_event.wait(0.15)
+            self.stop_event.wait(0.5)
 
 
 def run_sender(config: dict[str, Any], stop_event: threading.Event) -> int:
