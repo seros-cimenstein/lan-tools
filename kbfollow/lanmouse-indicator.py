@@ -18,7 +18,7 @@ import urllib.request
 
 DEFAULT_CONFIG = "~/.config/lanmouse-indicator/config.json"
 HTTP_TIMEOUT = 2.0
-UI_POLL_MS = 200
+UI_POLL_MS = 100
 SIGNAL_TICK_MS = 100
 TOPMOST_REASSERT_MS = 3000
 
@@ -93,7 +93,7 @@ def read_config(path: Path) -> Config:
     status_url = require_string(raw, "status_url")
     token = require_string(raw, "token")
 
-    poll_interval_raw = raw.get("poll_interval", 1.0)
+    poll_interval_raw = raw.get("poll_interval", 0.3)
     if (
         isinstance(poll_interval_raw, bool)
         or not isinstance(poll_interval_raw, (int, float))
