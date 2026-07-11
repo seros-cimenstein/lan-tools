@@ -236,6 +236,10 @@ class IndicatorWindow:
 
         self.root.withdraw()
         self.root.overrideredirect(True)
+        try:
+            self.root.attributes("-type", "notification")
+        except tk.TclError:
+            pass
         self.root.configure(bg=TRANSPARENT_BG)
         self.root.attributes("-topmost", True)
         try:
