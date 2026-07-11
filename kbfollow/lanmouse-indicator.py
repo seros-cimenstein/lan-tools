@@ -43,6 +43,7 @@ class Config:
     poll_interval: float
     margin: int
     font_size: int
+    opacity: float
     labels: dict[str, str]
 
 
@@ -125,6 +126,17 @@ def read_config(path: Path) -> Config:
         raise ConfigError("'font_size' must be a positive integer")
     font_size = font_size_raw
 
+    opacity_raw = raw.get("opacity", 0.8)
+    if (
+        isinstance(opacity_raw, bool)
+        or not isinstance(opacity_raw, (int, float))
+        or not math.isfinite(float(opacity_raw))
+        or float(opacity_raw) <= 0.0
+        or float(opacity_raw) > 1.0
+    ):
+        raise ConfigError("'opacity' must be a number in (0.0, 1.0]")
+    opacity = float(opacity_raw)
+
     labels_raw = raw.get("labels", {})
     if not isinstance(labels_raw, dict):
         raise ConfigError("'labels' must be an object mapping strings to strings")
@@ -141,6 +153,7 @@ def read_config(path: Path) -> Config:
         poll_interval=poll_interval,
         margin=margin,
         font_size=font_size,
+        opacity=opacity,
         labels=labels,
     )
 
@@ -224,6 +237,10 @@ class IndicatorWindow:
         self.root.overrideredirect(True)
         self.root.configure(bg=TRANSPARENT_BG)
         self.root.attributes("-topmost", True)
+        try:
+            self.root.attributes("-alpha", config.opacity)
+        except tk.TclError:
+            pass
 
         self.transparent = True
         try:
