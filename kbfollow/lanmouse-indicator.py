@@ -42,6 +42,7 @@ class Config:
     token: str
     poll_interval: float
     margin: int
+    font_size: int
     labels: dict[str, str]
 
 
@@ -115,6 +116,15 @@ def read_config(path: Path) -> Config:
         raise ConfigError("'margin' must be a non-negative integer")
     margin = int(margin_raw)
 
+    font_size_raw = raw.get("font_size", 14)
+    if (
+        isinstance(font_size_raw, bool)
+        or not isinstance(font_size_raw, int)
+        or font_size_raw <= 0
+    ):
+        raise ConfigError("'font_size' must be a positive integer")
+    font_size = font_size_raw
+
     labels_raw = raw.get("labels", {})
     if not isinstance(labels_raw, dict):
         raise ConfigError("'labels' must be an object mapping strings to strings")
@@ -130,6 +140,7 @@ def read_config(path: Path) -> Config:
         token=token,
         poll_interval=poll_interval,
         margin=margin,
+        font_size=font_size,
         labels=labels,
     )
 
@@ -207,7 +218,7 @@ class IndicatorWindow:
         self.shared = shared
         self.stop_event = stop_event
         self.current_state: IndicatorState | None = None
-        self.height = 22
+        self.height = 30
 
         self.root.withdraw()
         self.root.overrideredirect(True)
@@ -230,7 +241,7 @@ class IndicatorWindow:
         self.canvas.pack(fill="both", expand=True)
 
         self.font = tkfont.nametofont("TkDefaultFont").copy()
-        self.font.configure(size=10)
+        self.font.configure(size=config.font_size)
 
     def start(self) -> None:
         self.apply_latest_state()
@@ -275,14 +286,14 @@ class IndicatorWindow:
         self.redraw(state)
 
     def redraw(self, state: IndicatorState) -> None:
-        dot_size = 10
-        left_pad = 8
-        gap = 6
-        right_pad = 9
+        dot_size = 14
+        left_pad = 11
+        gap = 8
+        right_pad = 13
         line_space = self.font.metrics("linespace")
-        self.height = max(22, line_space + 6)
+        self.height = max(30, line_space + 8)
         text_width = self.font.measure(state.text)
-        width = max(28, left_pad + dot_size + gap + text_width + right_pad)
+        width = max(39, left_pad + dot_size + gap + text_width + right_pad)
 
         self.canvas.configure(width=width, height=self.height)
         self.canvas.delete("all")
