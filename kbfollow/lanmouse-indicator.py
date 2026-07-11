@@ -45,6 +45,8 @@ class Config:
     margin: int
     font_size: int
     opacity: float
+    dot_opacity: float
+    text_opacity: float
     labels: dict[str, str]
 
 
@@ -76,6 +78,19 @@ def require_string(config: dict[str, object], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{key!r} must be a non-empty string")
     return value
+
+
+def require_opacity(config: dict[str, object], key: str, default: float) -> float:
+    value = config.get(key, default)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+        or float(value) > 1.0
+    ):
+        raise ConfigError(f"'{key}' must be a number in (0.0, 1.0]")
+    return float(value)
 
 
 def read_config(path: Path) -> Config:
@@ -127,16 +142,9 @@ def read_config(path: Path) -> Config:
         raise ConfigError("'font_size' must be a positive integer")
     font_size = font_size_raw
 
-    opacity_raw = raw.get("opacity", 0.8)
-    if (
-        isinstance(opacity_raw, bool)
-        or not isinstance(opacity_raw, (int, float))
-        or not math.isfinite(float(opacity_raw))
-        or float(opacity_raw) <= 0.0
-        or float(opacity_raw) > 1.0
-    ):
-        raise ConfigError("'opacity' must be a number in (0.0, 1.0]")
-    opacity = float(opacity_raw)
+    opacity = require_opacity(raw, "opacity", 0.8)
+    dot_opacity = require_opacity(raw, "dot_opacity", 1.0)
+    text_opacity = require_opacity(raw, "text_opacity", 0.9)
 
     labels_raw = raw.get("labels", {})
     if not isinstance(labels_raw, dict):
@@ -155,6 +163,8 @@ def read_config(path: Path) -> Config:
         margin=margin,
         font_size=font_size,
         opacity=opacity,
+        dot_opacity=dot_opacity,
+        text_opacity=text_opacity,
         labels=labels,
     )
 
@@ -419,8 +429,6 @@ class GtkLayerIndicatorWindow:
         if visual is not None:
             self.window.set_visual(visual)
 
-        self.window.set_opacity(config.opacity)
-
         self.GtkLayerShell.init_for_window(self.window)
         self.GtkLayerShell.set_namespace(self.window, "lanmouse-indicator")
         self.GtkLayerShell.set_layer(
@@ -552,13 +560,13 @@ class GtkLayerIndicatorWindow:
         gap = 8
         dot_radius = dot_size / 2.0
         dot_r, dot_g, dot_b = color_to_rgb(state.dot_color)
-        cr.set_source_rgb(dot_r, dot_g, dot_b)
+        cr.set_source_rgba(dot_r, dot_g, dot_b, self.config.dot_opacity)
         cr.arc(left_pad + dot_radius, height / 2.0, dot_radius, 0, math.tau)
         cr.fill()
 
         self.configure_font(cr)
         text_r, text_g, text_b = color_to_rgb(state.text_color)
-        cr.set_source_rgb(text_r, text_g, text_b)
+        cr.set_source_rgba(text_r, text_g, text_b, self.config.text_opacity)
         font_extents = cr.font_extents()
         ascent = cairo_metric(font_extents, "ascent", 0)
         descent = cairo_metric(font_extents, "descent", 1)
@@ -570,7 +578,7 @@ class GtkLayerIndicatorWindow:
     def draw_pill(self, cr: object, width: int, height: int) -> None:
         radius = height / 2.0
         bg_r, bg_g, bg_b = color_to_rgb(PILL_BG)
-        cr.set_source_rgb(bg_r, bg_g, bg_b)
+        cr.set_source_rgba(bg_r, bg_g, bg_b, self.config.opacity)
         cr.new_path()
         cr.move_to(radius, 0)
         cr.line_to(width - radius, 0)
