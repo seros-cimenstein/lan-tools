@@ -52,7 +52,7 @@ Example for the Arch laptop with the physical `Logitech M215` mouse:
   "name": "laptop",
   "token": "change-this-long-random-token",
   "keyboard_match": "Designer Compact Keyboard",
-  "mouse_match": "Logitech M215",
+  "mouse_match": ["Logitech M215", "LanPad pointer"],
   "control_port": 47701,
   "receivers": [
     {"name": "laptop", "host": "laptop.local", "port": 47702},
@@ -71,7 +71,10 @@ Required common keys:
 
 Sender-only keys:
 
-- `mouse_match`: substring matched against `/sys/class/input/event*/device/name`
+- `mouse_match`: one substring or a non-empty list of substrings matched against
+  `/sys/class/input/event*/device/name`. Use a list to forward multiple mice;
+  for example, `LanPad pointer` lets LanPad's phone touchpad be forwarded without
+  matching the separate `LanPad` touchpad device.
 - `control_port`: HTTP control port, default `47701`
 - `settle_seconds`: keyboard presence settle delay, default `1.2`
 - `receivers`: list of `{ "name", "host", "port" }`

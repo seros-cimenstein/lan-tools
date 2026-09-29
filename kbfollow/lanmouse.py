@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import errno
 import fcntl
 import glob
 import hmac
@@ -160,7 +159,17 @@ def load_config(path: str) -> dict[str, Any]:
     require_string(raw, "keyboard_match")
 
     if role == "sender":
-        require_string(raw, "mouse_match")
+        mouse_match = raw.get("mouse_match")
+        if isinstance(mouse_match, str):
+            if not mouse_match:
+                raise ConfigError("mouse_match must be a non-empty string or list of non-empty strings")
+            raw["mouse_match"] = [mouse_match]
+        elif (
+            not isinstance(mouse_match, list)
+            or not mouse_match
+            or any(not isinstance(match, str) or not match for match in mouse_match)
+        ):
+            raise ConfigError("mouse_match must be a non-empty string or list of non-empty strings")
         require_port(raw, "control_port", 47701)
         require_seconds(raw, "settle_seconds", DEFAULT_SETTLE_SECONDS)
         receivers = raw.get("receivers")
@@ -197,17 +206,27 @@ def keyboard_present(match: str) -> bool:
     return False
 
 
-def find_event_device(name_match: str) -> str | None:
-    for name_path in sorted(glob.glob("/sys/class/input/event*/device/name")):
+def find_event_devices(name_matches: list[str]) -> list[str]:
+    paths: set[str] = set()
+    for name_path in glob.glob("/sys/class/input/event*/device/name"):
         try:
             with open(name_path, "r", encoding="utf-8", errors="replace") as fh:
                 name = fh.read().strip()
         except OSError:
             continue
-        if name_match in name:
+        if any(match in name for match in name_matches):
             event_name = os.path.basename(os.path.dirname(os.path.dirname(name_path)))
-            return os.path.join("/dev/input", event_name)
-    return None
+            paths.add(os.path.join("/dev/input", event_name))
+    return sorted(paths)
+
+
+def event_device_name(path: str) -> str:
+    name_path = os.path.join("/sys/class/input", os.path.basename(path), "device", "name")
+    try:
+        with open(name_path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
 
 
 def safe_close(sock: socket.socket | None) -> None:
@@ -409,7 +428,7 @@ class PresenceArbiter(threading.Thread):
 class MouseForwarder(threading.Thread):
     def __init__(
         self,
-        mouse_match: str,
+        mouse_match: list[str],
         receivers: dict[str, dict[str, Any]],
         token: str,
         state: SenderState,
@@ -421,8 +440,9 @@ class MouseForwarder(threading.Thread):
         self.token = token
         self.state = state
         self.stop_event = stop_event
-        self.fd: int | None = None
-        self.grabbed = False
+        self.devices: dict[int, tuple[str, str]] = {}
+        self.partial_events: dict[int, bytes] = {}
+        self.grabbed_fds: set[int] = set()
         self.sock: socket.socket | None = None
         self.sock_target: str | None = None
         self.pressed_buttons: set[int] = set()
@@ -436,12 +456,15 @@ class MouseForwarder(threading.Thread):
         with self.cleanup_lock:
             self._close_connection_locked()
             self._ungrab_locked()
-            if self.fd is not None:
+            for fd, (path, name) in list(self.devices.items()):
                 try:
-                    os.close(self.fd)
+                    os.close(fd)
                 except OSError:
                     pass
-                self.fd = None
+                logging.info("mouse device closed: %s (%s)", path, name)
+            self.devices.clear()
+            self.partial_events.clear()
+            self.state.set_mouse_found(False)
 
     def _release_pressed_buttons_locked(self) -> None:
         if self.sock is None:
@@ -472,30 +495,30 @@ class MouseForwarder(threading.Thread):
             self.pressed_buttons.clear()
 
     def _ungrab_locked(self) -> None:
-        if self.fd is None or not self.grabbed:
-            self.grabbed = False
-            return
-        try:
-            fcntl.ioctl(self.fd, EVIOCGRAB, 0)
-            logging.info("mouse ungrabbed")
-        except OSError as exc:
-            logging.warning("EVIOCGRAB release failed: %s", exc)
-        finally:
-            self.grabbed = False
+        for fd in list(self.grabbed_fds):
+            path, name = self.devices.get(fd, ("<unknown>", "unknown"))
+            try:
+                fcntl.ioctl(fd, EVIOCGRAB, 0)
+                logging.info("mouse device ungrabbed: %s (%s)", path, name)
+            except OSError as exc:
+                logging.warning("EVIOCGRAB release failed for %s (%s): %s", path, name, exc)
+            finally:
+                self.grabbed_fds.discard(fd)
 
     def _grab(self) -> bool:
         with self.cleanup_lock:
-            if self.fd is None:
+            if not self.devices:
                 return False
-            if self.grabbed:
-                return True
-            try:
-                fcntl.ioctl(self.fd, EVIOCGRAB, 1)
-            except OSError as exc:
-                logging.error("EVIOCGRAB failed: %s", exc)
-                return False
-            self.grabbed = True
-        logging.info("mouse grabbed")
+            for fd, (path, name) in self.devices.items():
+                if fd in self.grabbed_fds:
+                    continue
+                try:
+                    fcntl.ioctl(fd, EVIOCGRAB, 1)
+                except OSError as exc:
+                    logging.error("EVIOCGRAB failed for %s (%s): %s", path, name, exc)
+                    return False
+                self.grabbed_fds.add(fd)
+                logging.info("mouse device grabbed: %s (%s)", path, name)
         return True
 
     def _ungrab(self) -> None:
@@ -653,84 +676,138 @@ class MouseForwarder(threading.Thread):
                 out.extend(struct.pack(WIRE_EVENT_FORMAT, ev_type, code, value))
         return bytes(out)
 
-    def _open_mouse(self) -> bool:
-        path = find_event_device(self.mouse_match)
-        if path is None:
-            self.state.set_mouse_found(False)
-            return False
-        try:
-            fd = os.open(path, os.O_RDONLY)
-        except OSError as exc:
-            logging.warning("cannot open %s: %s", path, exc)
-            self.state.set_mouse_found(False)
-            return False
-        with self.cleanup_lock:
-            self.fd = fd
-        self.state.set_mouse_found(True)
-        logging.info("mouse device -> %s", path)
-        return True
+    def _open_missing_devices(self) -> None:
+        for path in find_event_devices(self.mouse_match):
+            with self.cleanup_lock:
+                if any(device_path == path for device_path, _name in self.devices.values()):
+                    continue
+            name = event_device_name(path)
+            try:
+                fd = os.open(path, os.O_RDONLY)
+            except OSError as exc:
+                logging.warning("cannot open mouse device %s (%s): %s", path, name, exc)
+                continue
 
-    def _close_mouse(self) -> None:
-        with self.cleanup_lock:
-            self._close_connection_locked()
-            self._ungrab_locked()
-            if self.fd is not None:
+            with self.cleanup_lock:
+                if self.stop_event.is_set():
+                    should_close = True
+                else:
+                    self.devices[fd] = (path, name)
+                    self.partial_events[fd] = b""
+                    self.state.set_mouse_found(True)
+                    should_close = False
+            if should_close:
                 try:
-                    os.close(self.fd)
+                    os.close(fd)
                 except OSError:
                     pass
-                self.fd = None
-        self.state.set_mouse_found(False)
+                continue
+            logging.info("mouse device opened: %s (%s)", path, name)
+
+        with self.cleanup_lock:
+            self.state.set_mouse_found(bool(self.devices))
+
+    def _close_device(self, fd: int, reason: str) -> None:
+        with self.cleanup_lock:
+            device = self.devices.pop(fd, None)
+            if device is None:
+                return
+            path, name = device
+            if self.sock is not None:
+                self._release_pressed_buttons_locked()
+            if fd in self.grabbed_fds:
+                try:
+                    fcntl.ioctl(fd, EVIOCGRAB, 0)
+                    logging.info("mouse device ungrabbed: %s (%s)", path, name)
+                except OSError as exc:
+                    logging.warning(
+                        "EVIOCGRAB release failed for %s (%s): %s",
+                        path,
+                        name,
+                        exc,
+                    )
+                finally:
+                    self.grabbed_fds.discard(fd)
+            self.partial_events.pop(fd, None)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            logging.info("mouse device closed: %s (%s): %s", path, name, reason)
+            self.state.set_mouse_found(bool(self.devices))
 
     def _read_loop(self) -> None:
-        partial = b""
-        while not self.stop_event.is_set() and self.fd is not None:
+        next_scan = 0.0
+        while not self.stop_event.is_set():
+            now = time.monotonic()
+            if now >= next_scan:
+                self._open_missing_devices()
+                next_scan = time.monotonic() + 1.0
+
+            with self.cleanup_lock:
+                fds = list(self.devices)
+            timeout = min(0.5, max(0.0, next_scan - time.monotonic()))
+            if not fds:
+                # Like the single-device version: with nothing to forward, hold no stream and
+                # leave the keyboard-driven target alone (syncing would force it to local).
+                self._close_connection()
+                self.stop_event.wait(timeout)
+                continue
+
             target = self._sync_target()
+
             try:
-                ready, _, _ = select.select([self.fd], [], [], 0.5)
+                ready, _, _ = select.select(fds, [], [], timeout)
             except (OSError, ValueError) as exc:
-                logging.warning("mouse select failed: %s", exc)
-                break
-
-            if not ready:
+                if not self.stop_event.is_set():
+                    logging.warning("mouse select failed: %s", exc)
+                    self.stop_event.wait(0.1)
                 continue
 
-            try:
-                chunk = os.read(self.fd, INPUT_EVENT_SIZE * 64)
-            except OSError as exc:
-                if exc.errno in {errno.ENODEV, errno.EIO, errno.ENXIO}:
-                    logging.warning("mouse device read failed; rescanning: %s", exc)
-                else:
-                    logging.warning("mouse read failed; rescanning: %s", exc)
-                break
+            for fd in ready:
+                with self.cleanup_lock:
+                    device = self.devices.get(fd)
+                    partial = self.partial_events.get(fd, b"")
+                if device is None:
+                    continue
+                path, name = device
 
-            if not chunk:
-                logging.warning("mouse device returned EOF; rescanning")
-                break
+                try:
+                    chunk = os.read(fd, INPUT_EVENT_SIZE * 64)
+                except OSError as exc:
+                    logging.warning(
+                        "mouse read failed for %s (%s); closing device: %s",
+                        path,
+                        name,
+                        exc,
+                    )
+                    self._close_device(fd, "read error")
+                    continue
 
-            data = partial + chunk
-            full_len = len(data) - (len(data) % INPUT_EVENT_SIZE)
-            full_data = data[:full_len]
-            partial = data[full_len:]
+                if not chunk:
+                    logging.warning("mouse device returned EOF: %s (%s)", path, name)
+                    self._close_device(fd, "EOF")
+                    continue
 
-            if target == "local" or not full_data:
-                continue
-            payload = self._events_to_payload(full_data)
-            if payload:
-                self._send_payload(target, payload)
+                data = partial + chunk
+                full_len = len(data) - (len(data) % INPUT_EVENT_SIZE)
+                full_data = data[:full_len]
+                with self.cleanup_lock:
+                    if fd not in self.devices:
+                        continue
+                    self.partial_events[fd] = data[full_len:]
+
+                if target == "local" or not full_data:
+                    continue
+                payload = self._events_to_payload(full_data)
+                if payload:
+                    self._send_payload(target, payload)
 
     def run(self) -> None:
-        while not self.stop_event.is_set():
-            if not self._open_mouse():
-                self.stop_event.wait(1.0)
-                continue
-            try:
-                self._read_loop()
-            finally:
-                self._close_mouse()
-            if not self.stop_event.is_set():
-                self.stop_event.wait(1.0)
-        self.cleanup()
+        try:
+            self._read_loop()
+        finally:
+            self.cleanup()
 
 
 class UInputMouse:
@@ -1053,7 +1130,7 @@ def run_sender(config: dict[str, Any], stop_event: threading.Event) -> int:
     keyboard_watcher = SenderKeyboardWatcher(config["keyboard_match"], state, stop_event)
     presence_arbiter = PresenceArbiter(state, settle_seconds, stop_event)
     mouse_forwarder = MouseForwarder(
-        config["mouse_match"],
+        list(config["mouse_match"]),
         receivers,
         config["token"],
         state,
