@@ -350,9 +350,9 @@ class IndicatorWindow:
             font=self.font,
         )
 
-        screen_height = self.root.winfo_screenheight()
-        x_pos = self.config.margin
-        y_pos = max(0, screen_height - self.height - self.config.margin)
+        screen_width = self.root.winfo_screenwidth()
+        x_pos = max(0, (screen_width - width) // 2)
+        y_pos = self.config.margin
         self.root.geometry(f"{width}x{self.height}+{x_pos}+{y_pos}")
         self.root.deiconify()
         self.root.lift()
@@ -437,22 +437,12 @@ class GtkLayerIndicatorWindow:
         )
         self.GtkLayerShell.set_anchor(
             self.window,
-            self.GtkLayerShell.Edge.LEFT,
-            True,
-        )
-        self.GtkLayerShell.set_anchor(
-            self.window,
-            self.GtkLayerShell.Edge.BOTTOM,
+            self.GtkLayerShell.Edge.TOP,
             True,
         )
         self.GtkLayerShell.set_margin(
             self.window,
-            self.GtkLayerShell.Edge.LEFT,
-            config.margin,
-        )
-        self.GtkLayerShell.set_margin(
-            self.window,
-            self.GtkLayerShell.Edge.BOTTOM,
+            self.GtkLayerShell.Edge.TOP,
             config.margin,
         )
 

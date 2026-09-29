@@ -124,6 +124,34 @@ Run in debug mode with a temporary config:
 python3 /usr/local/lib/lanmouse/lanmouse.py --config /etc/lanmouse/config.json --debug
 ```
 
+## Managing services
+
+`tools/lanmouse-ctl.sh` restarts and inspects the system unit and the user
+indicator unit on every lanmouse machine, so one command covers `laptop`
+(sender), `laptop`, and `desktop` (receivers):
+
+```sh
+tools/lanmouse-ctl.sh status all
+tools/lanmouse-ctl.sh restart laptop
+tools/lanmouse-ctl.sh logs desktop -n 20
+```
+
+Hosts are reached through the `laptop` and `desktop` entries in `~/.ssh/config`.
+Remote system units are restarted with `ssh -t` so `sudo` can prompt in the
+terminal, and an unreachable host is reported without aborting the other hosts.
+The script only controls services; it does not deploy code.
+
+Add a shell alias to reach it from anywhere. For fish, create
+`~/.config/fish/functions/lm.fish`:
+
+```fish
+function lm --description 'lanmouse service control'
+    /home/user/lanmouse/tools/lanmouse-ctl.sh $argv
+end
+```
+
+Then `lm status all`, `lm restart desktop`, and so on.
+
 ## Indicator
 
 `lanmouse-indicator.py` is an optional user-session Tk indicator for each host.
