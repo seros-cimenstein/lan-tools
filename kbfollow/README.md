@@ -129,9 +129,11 @@ python3 /usr/local/lib/lanmouse/lanmouse.py --config /etc/lanmouse/config.json -
 
 ## Managing services
 
-`tools/lanmouse-ctl.sh` restarts and inspects the system unit and the user
-indicator unit on every lanmouse machine, so one command covers `laptop`
-(sender), `laptop`, and `desktop` (receivers):
+`tools/lanmouse-ctl.sh` restarts and inspects the system unit and the
+indicator on every lanmouse machine, so one command covers `laptop`
+(sender), `laptop`, and `desktop` (receivers). The laptop's indicator runs inside
+swaybar (see below), so the script only reports whether it is running and
+leaves restarting it to `swaymsg reload`:
 
 ```sh
 tools/lanmouse-ctl.sh status all
@@ -157,10 +159,11 @@ Then `lm status all`, `lm restart desktop`, and so on.
 
 ## Indicator
 
-`lanmouse-indicator.py` is an optional user-session Tk indicator for each host.
-It polls the sender's `/status` endpoint and shows a small always-on-top marker
-in the bottom-left corner: green for this machine, gray for another target, and
-orange when the sender cannot be reached.
+`lanmouse-indicator.py` is an optional per-host indicator. It polls the sender's
+`/status` endpoint and shows which machine has the keyboard and mouse: green
+for this machine, gray for another target, and orange when the sender cannot
+be reached. By default it draws a small always-on-top pill at the top center of
+the screen (GTK layer-shell on Wayland, Tk otherwise).
 
 Install it as a user service:
 
@@ -189,3 +192,48 @@ used:
 Use `"self": "local"` on the sender laptop. If the service starts before the
 display environment is available, uncomment the matching `DISPLAY` and
 `XAUTHORITY` lines in the user unit.
+
+### Swaybar mode
+
+On sway hosts the indicator can live in the bar instead of drawing an overlay.
+`--swaybar` prints the i3bar JSON protocol to stdout: one `⌨ <target>` block,
+green/gray/orange as above. `--clock FORMAT` appends a strftime clock block,
+since swaybar's `status_command` replaces the whole status line. Disable the
+overlay unit first:
+
+```sh
+systemctl --user disable --now lanmouse-indicator.service
+```
+
+Alone in the bar:
+
+```
+bar {
+    status_command python3 ~/.local/lib/lanmouse-indicator/lanmouse-indicator.py --swaybar --clock "'%Y-%m-%d %X'"
+}
+```
+
+swaybar runs only one status command, so sharing the bar with other producers
+(e.g. lanclip-indicator) goes through `tools/swaybar-merge.py`. It runs each
+argument with `sh -c`, concatenates their blocks in argument order, and routes
+click events to whichever child owns the clicked block. Children must print one
+block array per line. Install it and call it from a small wrapper script so
+sway's config quoting stays simple:
+
+```sh
+install -m 755 tools/swaybar-merge.py ~/.local/bin/swaybar-merge
+```
+
+```sh
+#!/bin/sh
+# ~/.local/bin/sway-status
+exec "$HOME/.local/bin/swaybar-merge" \
+  "python3 $HOME/.local/lib/lanmouse-indicator/lanmouse-indicator.py --swaybar" \
+  "python3 $HOME/.local/lib/lanclip-indicator/lanclip-indicator.py --swaybar --clock '%Y-%m-%d %X'"
+```
+
+```
+bar {
+    status_command ~/.local/bin/sway-status
+}
+```

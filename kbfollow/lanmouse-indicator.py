@@ -11,6 +11,7 @@ from pathlib import Path
 import signal
 import sys
 import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 import urllib.error
@@ -30,6 +31,8 @@ ELSEWHERE_DOT = "#555555"
 UNKNOWN_DOT = "#ff9933"
 HERE_FG = "#ffffff"
 ELSEWHERE_FG = "#aaaaaa"
+
+BAR_COLORS = {"here": HERE_DOT, "elsewhere": ELSEWHERE_FG, "unknown": UNKNOWN_DOT}
 
 
 class ConfigError(Exception):
@@ -605,6 +608,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_CONFIG,
         help=f"config path, default: {DEFAULT_CONFIG}",
     )
+    parser.add_argument(
+        "--swaybar",
+        action="store_true",
+        help="emit an i3bar-protocol status line for swaybar's status_command "
+        "instead of drawing an overlay",
+    )
+    parser.add_argument(
+        "--clock",
+        metavar="FORMAT",
+        help="with --swaybar, append a strftime clock block, e.g. '%%Y-%%m-%%d %%X'",
+    )
     return parser.parse_args(argv)
 
 
@@ -639,6 +653,57 @@ def run(config: Config) -> int:
     except KeyboardInterrupt:
         stop_event.set()
         app.close()
+    finally:
+        stop_event.set()
+        poll_thread.join(timeout=HTTP_TIMEOUT + 0.5)
+
+    return 0
+
+
+def swaybar_blocks(state: IndicatorState, clock_format: str | None) -> list[dict[str, str]]:
+    blocks = [
+        {
+            "name": "lanmouse",
+            "full_text": f"⌨ {state.text}",
+            "color": BAR_COLORS[state.mode],
+        }
+    ]
+    if clock_format:
+        blocks.append({"name": "clock", "full_text": time.strftime(clock_format)})
+    return blocks
+
+
+def run_swaybar(config: Config, clock_format: str | None) -> int:
+    """Stream the i3bar JSON protocol to stdout for swaybar's status_command."""
+    stop_event = threading.Event()
+    install_signal_handlers(stop_event)
+    shared = SharedState(unknown_state())
+
+    poll_thread = threading.Thread(
+        target=poll_status,
+        args=(config, shared, stop_event),
+        name="lanmouse-indicator-poll",
+        daemon=True,
+    )
+    poll_thread.start()
+
+    try:
+        sys.stdout.write('{"version": 1}\n[\n')
+        separator = ""
+        last_line: str | None = None
+        while not stop_event.is_set():
+            line = json.dumps(swaybar_blocks(shared.get(), clock_format), separators=(",", ":"))
+            if line != last_line:
+                sys.stdout.write(f"{separator}{line}\n")
+                sys.stdout.flush()
+                separator = ","
+                last_line = line
+            # Not stop_event.wait(): the signal handler sets stop_event, and if it
+            # interrupts this thread inside that Event's lock it deadlocks.
+            time.sleep(UI_POLL_MS / 1000)
+    except BrokenPipeError:
+        # swaybar went away; silence the flush Python retries at exit.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     finally:
         stop_event.set()
         poll_thread.join(timeout=HTTP_TIMEOUT + 0.5)
@@ -691,6 +756,8 @@ def main(argv: list[str]) -> int:
     except ConfigError as exc:
         print(f"indicator: config error: {exc}", file=sys.stderr)
         return 2
+    if args.swaybar:
+        return run_swaybar(config, args.clock)
     gtk_backend = load_gtk_layer_backend()
     if gtk_backend is not None:
         return run_gtk_layer(config, gtk_backend)

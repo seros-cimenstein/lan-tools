@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -u
 
-# name|ssh_target(- = local)|system_unit
+# name|ssh_target(- = local)|system_unit|indicator
+# indicator is a user unit name, or `swaybar` when lanmouse-indicator.py runs
+# as swaybar's status_command (swaybar owns that process, so it is only checked).
 HOSTS=(
-  'laptop|-|lanmouse-sender'
-  'laptop|laptop|lanmouse-receiver'
-  'desktop|desktop|lanmouse-receiver'
+  'laptop|-|lanmouse-sender|swaybar'
+  'laptop|laptop|lanmouse-receiver|lanmouse-indicator'
+  'desktop|desktop|lanmouse-receiver|lanmouse-indicator'
 )
 
-USER_UNIT='lanmouse-indicator'
+# The [r] keeps pgrep from matching a shell whose command line contains this text.
+SWAYBAR_PATTERN='lanmouse-indicator.py --swayba[r]'
 LOG_LINES=40
 SSH_OPTS=(
   -o ConnectTimeout=5
@@ -30,7 +33,7 @@ Commands:
   logs      print recent journal lines (-n LINES, default 40)
 
 Hosts:
-  laptop    this machine (lanmouse-sender + user lanmouse-indicator)
+  laptop    this machine (lanmouse-sender + indicator in swaybar)
   laptop      ssh laptop (lanmouse-receiver + user lanmouse-indicator)
   desktop     ssh desktop (lanmouse-receiver + user lanmouse-indicator)
   all       every host above (the default when no host is given)
@@ -101,14 +104,29 @@ remote_run() {
   return "$status"
 }
 
+# Shell command printing the indicator's state as a single is-active word.
+indicator_state_cmd() {
+  if [ "$1" = 'swaybar' ]; then
+    printf "if pgrep -f -- '%s' >/dev/null; then echo active; else echo inactive; fi\n" \
+      "$SWAYBAR_PATTERN"
+  else
+    printf 'systemctl --user is-active %s\n' "$1"
+  fi
+}
+
 do_lifecycle() {
   local name=$1
   local target=$2
   local unit=$3
-  local action=$4
+  local indicator=$4
+  local action=$5
   local status
 
-  log "${name}: ${action} ${unit} + ${USER_UNIT}"
+  if [ "$indicator" = 'swaybar' ]; then
+    log "${name}: ${action} ${unit} (indicator runs inside swaybar; not touched)"
+  else
+    log "${name}: ${action} ${unit} + ${indicator}"
+  fi
 
   if [ "$target" = '-' ]; then
     sudo systemctl "$action" "$unit"
@@ -118,11 +136,13 @@ do_lifecycle() {
       FAILED=1
     fi
 
-    systemctl --user "$action" "$USER_UNIT"
-    status=$?
-    if [ "$status" -ne 0 ]; then
-      log "${name}: systemctl --user ${action} ${USER_UNIT} failed with exit ${status}"
-      FAILED=1
+    if [ "$indicator" != 'swaybar' ]; then
+      systemctl --user "$action" "$indicator"
+      status=$?
+      if [ "$status" -ne 0 ]; then
+        log "${name}: systemctl --user ${action} ${indicator} failed with exit ${status}"
+        FAILED=1
+      fi
     fi
 
     return 0
@@ -132,7 +152,9 @@ do_lifecycle() {
     user_env_snippet
     printf 'rc=0\n'
     printf 'sudo systemctl %s %s || rc=$?\n' "$action" "$unit"
-    printf 'systemctl --user %s %s || rc=$?\n' "$action" "$USER_UNIT"
+    if [ "$indicator" != 'swaybar' ]; then
+      printf 'systemctl --user %s %s || rc=$?\n' "$action" "$indicator"
+    fi
     printf 'exit "$rc"\n'
   )" || FAILED=1
 }
@@ -141,6 +163,7 @@ do_status() {
   local name=$1
   local target=$2
   local unit=$3
+  local indicator=$4
   local system_state
   local user_state
   local output
@@ -148,14 +171,14 @@ do_status() {
 
   if [ "$target" = '-' ]; then
     system_state=$(systemctl is-active "$unit" 2>&1)
-    user_state=$(systemctl --user is-active "$USER_UNIT" 2>&1)
+    user_state=$(eval "$(indicator_state_cmd "$indicator")" 2>&1)
   else
     # `is-active` exits non-zero for inactive units, so only ssh's own 255
     # counts as unreachable here.
     output=$(ssh "${SSH_OPTS[@]}" "$target" "$(
       user_env_snippet
       printf 'systemctl is-active %s\n' "$unit"
-      printf 'systemctl --user is-active %s\n' "$USER_UNIT"
+      indicator_state_cmd "$indicator"
     )" 2>/dev/null)
     status=$?
     if [ "$status" -eq 255 ] || [ -z "$output" ]; then
@@ -168,7 +191,7 @@ do_status() {
   fi
 
   printf '%-7s %-28s %s\n' \
-    "$name" "${unit}=${system_state:-unknown}" "${USER_UNIT}=${user_state:-unknown}"
+    "$name" "${unit}=${system_state:-unknown}" "${indicator}=${user_state:-unknown}"
 
   if [ "$system_state" != 'active' ] || [ "$user_state" != 'active' ]; then
     FAILED=1
@@ -179,12 +202,19 @@ do_logs() {
   local name=$1
   local target=$2
   local unit=$3
+  local indicator=$4
 
-  log "${name}: last ${LOG_LINES} lines of ${unit} and ${USER_UNIT}"
+  if [ "$indicator" = 'swaybar' ]; then
+    log "${name}: last ${LOG_LINES} lines of ${unit} (swaybar indicator has no journal)"
+  else
+    log "${name}: last ${LOG_LINES} lines of ${unit} and ${indicator}"
+  fi
 
   if [ "$target" = '-' ]; then
     sudo journalctl -u "$unit" -n "$LOG_LINES" --no-pager || FAILED=1
-    journalctl --user -u "$USER_UNIT" -n "$LOG_LINES" --no-pager || FAILED=1
+    if [ "$indicator" != 'swaybar' ]; then
+      journalctl --user -u "$indicator" -n "$LOG_LINES" --no-pager || FAILED=1
+    fi
     return 0
   fi
 
@@ -192,7 +222,9 @@ do_logs() {
     user_env_snippet
     printf 'rc=0\n'
     printf 'sudo journalctl -u %s -n %s --no-pager || rc=$?\n' "$unit" "$LOG_LINES"
-    printf 'journalctl --user -u %s -n %s --no-pager || rc=$?\n' "$USER_UNIT" "$LOG_LINES"
+    if [ "$indicator" != 'swaybar' ]; then
+      printf 'journalctl --user -u %s -n %s --no-pager || rc=$?\n' "$indicator" "$LOG_LINES"
+    fi
     printf 'exit "$rc"\n'
   )" || FAILED=1
 }
@@ -205,6 +237,7 @@ main() {
   local name
   local target
   local unit
+  local indicator
 
   while [ "$#" -gt 0 ]; do
     arg=$1
@@ -262,16 +295,17 @@ main() {
   for name in "${hosts[@]}"; do
     target=$(host_field "$name" 2)
     unit=$(host_field "$name" 3)
+    indicator=$(host_field "$name" 4)
 
     case $command in
       restart|start|stop)
-        do_lifecycle "$name" "$target" "$unit" "$command"
+        do_lifecycle "$name" "$target" "$unit" "$indicator" "$command"
         ;;
       status)
-        do_status "$name" "$target" "$unit"
+        do_status "$name" "$target" "$unit" "$indicator"
         ;;
       logs)
-        do_logs "$name" "$target" "$unit"
+        do_logs "$name" "$target" "$unit" "$indicator"
         ;;
     esac
   done
