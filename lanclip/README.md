@@ -58,7 +58,7 @@ Supported MIME types are `text/plain`, `image/png`, and `image/jpeg`. `GET /ping
 
 ## Indicator
 
-`lanclip-indicator` polls the local daemon's `GET /status` endpoint and shows a bottom-center row of machines. Green dots are reachable, gray dots are unreachable, and a blue checked badge marks the machine that most recently supplied clipboard content. An orange `?` appears when the local daemon cannot be reached.
+`lanclip-indicator` polls the local daemon's `GET /status` endpoint and shows a top-left row of machines. Green dots are reachable, gray dots are unreachable, and a blue checked badge marks the machine that most recently supplied clipboard content. An orange `?` appears when the local daemon cannot be reached.
 
 Create `~/.config/lanclip-indicator/config.json` on each host:
 
@@ -82,6 +82,18 @@ Create `~/.config/lanclip-indicator/config.json` on each host:
 ```
 
 Required keys: `self`, `status_url`, `token`. Use the same token as the local `lanclip` daemon. The remaining values shown above are their defaults, except `labels`, which defaults to an empty object and falls back to machine names.
+
+### Swaybar mode
+
+On sway, the indicator can live in the bar instead of a floating window. `--swaybar` turns it into a `status_command` that prints one dot per machine (green reachable, gray unreachable, blue for the latest clipboard source, orange `?` when the daemon is down). Clicking the block toggles machine names. `--clock FORMAT` appends a strftime clock block, since swaybar runs only one status command:
+
+```
+bar {
+    status_command python3 ~/.local/lib/lanclip-indicator/lanclip-indicator.py --swaybar --clock "'%Y-%m-%d %X'"
+}
+```
+
+Sway strips one level of quotes, so the format needs the double-then-single quoting shown above. On such hosts disable the floating window with `systemctl --user disable --now lanclip-indicator.service`; the bar process reads the same config.
 
 ## Install
 
@@ -130,7 +142,7 @@ If the indicator logs `waiting for wayland display`, the session is not up (or t
 
 ## Managing services
 
-`tools/lanclip-ctl.sh` restarts and inspects both user units (`lanclip` and `lanclip-indicator`) on every lanclip machine, so one command covers `laptop`, `laptop`, and `desktop`:
+`tools/lanclip-ctl.sh` restarts and inspects the lanclip user units on every lanclip machine, so one command covers `laptop`, `laptop`, and `desktop`. Each `HOSTS` entry lists that host's units: `laptop` uses swaybar mode and runs only `lanclip`; `laptop` and `desktop` also run `lanclip-indicator`:
 
 ```sh
 tools/lanclip-ctl.sh status all
@@ -144,7 +156,7 @@ Add a shell alias to reach it from anywhere. For fish, create `~/.config/fish/fu
 
 ```fish
 function lc --description 'lanclip service control'
-    /home/user/lanclip/tools/lanclip-ctl.sh $argv
+    /home/user/projects/quality_of_life_setups/lanclip/tools/lanclip-ctl.sh $argv
 end
 ```
 

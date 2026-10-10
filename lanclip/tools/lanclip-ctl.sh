@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -u
 
-# name|ssh_target(- = local)
+# name|ssh_target(- = local)|user units (space-separated)
+# laptop shows lanclip in swaybar (`--swaybar`), so it runs no indicator unit.
 HOSTS=(
-  'laptop|-'
-  'laptop|laptop'
-  'desktop|desktop'
+  'laptop|-|lanclip'
+  'laptop|laptop|lanclip lanclip-indicator'
+  'desktop|desktop|lanclip lanclip-indicator'
 )
 
-USER_UNITS=('lanclip' 'lanclip-indicator')
+USER_UNITS=()
 LOG_LINES=40
 SSH_OPTS=(
   -o ConnectTimeout=5
@@ -100,13 +101,13 @@ do_lifecycle() {
   local action=$3
   local status
 
-  log "${name}: ${action} lanclip + lanclip-indicator"
+  log "${name}: ${action} ${USER_UNITS[*]}"
 
   if [ "$target" = '-' ]; then
     systemctl --user "$action" "${USER_UNITS[@]}"
     status=$?
     if [ "$status" -ne 0 ]; then
-      log "${name}: systemctl --user ${action} lanclip + lanclip-indicator failed with exit ${status}"
+      log "${name}: systemctl --user ${action} ${USER_UNITS[*]} failed with exit ${status}"
       FAILED=1
     fi
 
@@ -184,7 +185,7 @@ do_logs() {
   local unit
   local -a unit_args=()
 
-  log "${name}: last ${LOG_LINES} lines of lanclip and lanclip-indicator"
+  log "${name}: last ${LOG_LINES} lines of ${USER_UNITS[*]}"
 
   for unit in "${USER_UNITS[@]}"; do
     unit_args+=(-u "$unit")
@@ -268,6 +269,7 @@ main() {
 
   for name in "${hosts[@]}"; do
     target=$(host_field "$name" 2)
+    read -r -a USER_UNITS <<<"$(host_field "$name" 3)"
 
     case $command in
       restart|start|stop)

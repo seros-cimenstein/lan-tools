@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
+import html
 import json
 import logging
 import math
@@ -28,6 +29,8 @@ DISPLAY_WAIT_TIMEOUT = 120.0
 UI_POLL_MS = 200
 SIGNAL_TICK_MS = 100
 TOPMOST_REASSERT_MS = 3000
+SWAYBAR_TICK_SECONDS = 0.25
+SWAYBAR_DOT = "\u25cf"
 
 PILL_BG = "#222222"
 TRANSPARENT_BG = "#010101"
@@ -409,10 +412,8 @@ class IndicatorWindow:
                 self.draw_copy_badge(width, dot_x, dot_y, dot_size)
             dot_x += group_width + dot_gap
 
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        x_pos = max(0, (screen_width - width) // 2)
-        y_pos = max(0, screen_height - self.height - self.config.margin)
+        x_pos = self.config.margin
+        y_pos = self.config.margin
         self.root.geometry(f"{width}x{self.height}+{x_pos}+{y_pos}")
         self.root.deiconify()
         self.root.lift()
@@ -527,12 +528,22 @@ class GtkLayerIndicatorWindow:
         )
         self.GtkLayerShell.set_anchor(
             self.window,
-            self.GtkLayerShell.Edge.BOTTOM,
+            self.GtkLayerShell.Edge.TOP,
+            True,
+        )
+        self.GtkLayerShell.set_anchor(
+            self.window,
+            self.GtkLayerShell.Edge.LEFT,
             True,
         )
         self.GtkLayerShell.set_margin(
             self.window,
-            self.GtkLayerShell.Edge.BOTTOM,
+            self.GtkLayerShell.Edge.TOP,
+            config.margin,
+        )
+        self.GtkLayerShell.set_margin(
+            self.window,
+            self.GtkLayerShell.Edge.LEFT,
             config.margin,
         )
 
@@ -799,7 +810,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_CONFIG,
         help=f"config path, default: {DEFAULT_CONFIG}",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--swaybar",
+        action="store_true",
+        help="emit a swaybar/i3bar status_command stream instead of a window",
+    )
+    parser.add_argument(
+        "--clock",
+        metavar="FORMAT",
+        help="with --swaybar, append a strftime clock block, e.g. '%%Y-%%m-%%d %%X'",
+    )
+    args = parser.parse_args(argv)
+    if args.clock is not None and not args.swaybar:
+        parser.error("--clock requires --swaybar")
+    return args
 
 
 def install_signal_handlers(stop_event: threading.Event) -> None:
@@ -876,6 +900,90 @@ def run_gtk_layer(config: Config, backend: tuple[object, object, object, object]
     return 0
 
 
+def swaybar_blocks(
+    state: IndicatorState, show_labels: bool, clock_text: str | None
+) -> list[dict[str, object]]:
+    if state.ok:
+        parts = []
+        for dot in state.dots:
+            if not dot.reachable:
+                color = ELSEWHERE_DOT
+            elif dot.is_source:
+                color = COPY_GLYPH_COLOR
+            else:
+                color = HERE_DOT
+            text = SWAYBAR_DOT
+            if show_labels:
+                text += f" {html.escape(dot.label)}"
+            parts.append(f'<span foreground="{color}">{text}</span>')
+        full_text = " ".join(parts)
+    else:
+        full_text = f'<span foreground="{UNKNOWN_DOT}">?</span>'
+
+    blocks: list[dict[str, object]] = [
+        {"name": "lanclip", "full_text": full_text, "markup": "pango"}
+    ]
+    if clock_text is not None:
+        blocks.append({"name": "clock", "full_text": clock_text})
+    return blocks
+
+
+def read_swaybar_clicks(toggle: Callable[[], None]) -> None:
+    # swaybar streams click events as an endless JSON array: "[", "{...}", ",{...}".
+    for line in sys.stdin:
+        line = line.strip().lstrip("[,")
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("name") == "lanclip":
+            toggle()
+
+
+def run_swaybar(config: Config, clock_format: str | None) -> int:
+    stop_event = threading.Event()
+    install_signal_handlers(stop_event)
+    shared = SharedState(unknown_state())
+    wake = threading.Event()
+    show_labels = False
+
+    def toggle_labels() -> None:
+        nonlocal show_labels
+        show_labels = not show_labels
+        wake.set()
+
+    threading.Thread(
+        target=poll_status,
+        args=(config, shared, stop_event),
+        name="lanclip-indicator-poll",
+        daemon=True,
+    ).start()
+    threading.Thread(
+        target=read_swaybar_clicks,
+        args=(toggle_labels,),
+        name="lanclip-indicator-clicks",
+        daemon=True,
+    ).start()
+
+    last_line: str | None = None
+    try:
+        sys.stdout.write('{"version": 1, "click_events": true}\n[\n')
+        while not stop_event.is_set():
+            clock_text = time.strftime(clock_format) if clock_format else None
+            line = json.dumps(swaybar_blocks(shared.get(), show_labels, clock_text))
+            if line != last_line:
+                sys.stdout.write(line + ",\n")
+                sys.stdout.flush()
+                last_line = line
+            wake.wait(SWAYBAR_TICK_SECONDS)
+            wake.clear()
+    except BrokenPipeError:
+        pass
+    return 0
+
+
 def main(argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="indicator: %(message)s")
     args = parse_args(argv)
@@ -885,6 +993,8 @@ def main(argv: list[str]) -> int:
     except ConfigError as exc:
         print(f"indicator: config error: {exc}", file=sys.stderr)
         return 2
+    if args.swaybar:
+        return run_swaybar(config, args.clock)
     gtk_backend = load_gtk_layer_backend()
     if gtk_backend is not None:
         return run_gtk_layer(config, gtk_backend)
