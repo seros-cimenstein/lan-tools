@@ -1,0 +1,12 @@
+{
+  "listen": "127.0.0.1",
+  "port": 47800,
+  "interval": 30,
+  "allowed_hosts": [],
+  "hosts": [
+    {"name": "workstation", "local": true},
+    {"name": "laptop", "ssh": ["laptop", "laptop-link", "laptop-wifi"]},
+    {"name": "seref", "ssh": ["pi-wired", "seref", "pi-wifi"]},
+    {"name": "desktop", "ssh": ["desktop", "desktop-wifi"]}
+  ]
+}

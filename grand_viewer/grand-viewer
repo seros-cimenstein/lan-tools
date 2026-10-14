@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# grand-viewer — open the grand_viewer dashboard in a Chromium tab, starting the
+# hub service first if it isn't running.
+set -euo pipefail
+
+CONF=~/.config/grand_viewer/config.json
+PORT=$(python3 -c 'import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("port", 47800))
+except FileNotFoundError:
+    print(47800)' "$CONF")
+URL="http://127.0.0.1:${PORT}/"
+
+if ! systemctl --user is-active --quiet grand_viewer.service; then
+	systemctl --user start grand_viewer.service
+fi
+for _ in $(seq 50); do
+	curl -fsS -o /dev/null "${URL}api/state" 2>/dev/null && break
+	sleep 0.2
+done || true
+curl -fsS -o /dev/null "${URL}api/state" || {
+	echo "grand-viewer: hub not answering on $URL (journalctl --user -u grand_viewer)" >&2
+	exit 1
+}
+
+# A running Chromium opens this as a new tab in its window; otherwise it starts one.
+setsid -f chromium "$URL" >/dev/null 2>&1
