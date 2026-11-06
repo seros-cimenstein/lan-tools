@@ -5,7 +5,7 @@ swaybar runs a single status_command. This runs each given command through
 `sh -c`, concatenates their latest block arrays in argument order, and routes
 swaybar click events back to the child that produced the clicked block.
 
-Children must print one block array per line, as lanmouse-indicator and
+Children must print one block array per line, as kbfollow-indicator and
 lanclip-indicator do.
 """
 from __future__ import annotations

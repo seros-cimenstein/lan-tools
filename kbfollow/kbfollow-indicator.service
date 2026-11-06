@@ -1,9 +1,9 @@
 [Unit]
-Description=lanmouse on-screen keyboard/mouse location indicator
+Description=kbfollow on-screen keyboard/mouse location indicator
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/python3 %h/.local/lib/lanmouse-indicator/lanmouse-indicator.py
+ExecStart=/usr/bin/python3 %h/.local/lib/kbfollow-indicator/kbfollow-indicator.py
 Restart=on-failure
 RestartSec=3
 # X11 hosts:

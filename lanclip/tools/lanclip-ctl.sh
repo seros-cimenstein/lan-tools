@@ -5,7 +5,7 @@ set -u
 # laptop shows lanclip in swaybar (`--swaybar`), so it runs no indicator unit.
 HOSTS=(
   'laptop|-|lanclip'
-  'laptop|laptop|lanclip lanclip-indicator'
+  'laptop2|laptop2|lanclip lanclip-indicator'
   'desktop|desktop|lanclip lanclip-indicator'
 )
 
@@ -32,8 +32,8 @@ Commands:
 
 Hosts:
   laptop    this machine
-  laptop      ssh laptop
-  desktop     ssh desktop
+  laptop2   ssh laptop2
+  desktop   ssh desktop
   all       every host above (the default when no host is given)
 
 This script only controls services; it does not deploy code.

@@ -6,7 +6,7 @@
   "hosts": [
     {"name": "workstation", "local": true},
     {"name": "laptop", "ssh": ["laptop", "laptop-link", "laptop-wifi"]},
-    {"name": "seref", "ssh": ["pi-wired", "seref", "pi-wifi"]},
+    {"name": "pi", "ssh": ["pi-wired", "pi", "pi-wifi"]},
     {"name": "desktop", "ssh": ["desktop", "desktop-wifi"]}
   ]
 }

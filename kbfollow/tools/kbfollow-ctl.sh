@@ -2,16 +2,16 @@
 set -u
 
 # name|ssh_target(- = local)|system_unit|indicator
-# indicator is a user unit name, or `swaybar` when lanmouse-indicator.py runs
+# indicator is a user unit name, or `swaybar` when kbfollow-indicator.py runs
 # as swaybar's status_command (swaybar owns that process, so it is only checked).
 HOSTS=(
-  'laptop|-|lanmouse-sender|swaybar'
-  'laptop|laptop|lanmouse-receiver|lanmouse-indicator'
-  'desktop|desktop|lanmouse-receiver|lanmouse-indicator'
+  'laptop|-|kbfollow-sender|swaybar'
+  'laptop2|laptop2|kbfollow-receiver|kbfollow-indicator'
+  'desktop|desktop|kbfollow-receiver|kbfollow-indicator'
 )
 
 # The [r] keeps pgrep from matching a shell whose command line contains this text.
-SWAYBAR_PATTERN='lanmouse-indicator.py --swayba[r]'
+SWAYBAR_PATTERN='kbfollow-indicator.py --swayba[r]'
 LOG_LINES=40
 SSH_OPTS=(
   -o ConnectTimeout=5
@@ -23,19 +23,19 @@ FAILED=0
 
 usage() {
   cat <<'USAGE'
-Usage: lanmouse-ctl.sh <command> [host...] [-n LINES]
+Usage: kbfollow-ctl.sh <command> [host...] [-n LINES]
 
 Commands:
-  restart   restart the lanmouse units
-  start     start the lanmouse units
-  stop      stop the lanmouse units
+  restart   restart the kbfollow units
+  start     start the kbfollow units
+  stop      stop the kbfollow units
   status    print is-active for each unit
   logs      print recent journal lines (-n LINES, default 40)
 
 Hosts:
-  laptop    this machine (lanmouse-sender + indicator in swaybar)
-  laptop      ssh laptop (lanmouse-receiver + user lanmouse-indicator)
-  desktop     ssh desktop (lanmouse-receiver + user lanmouse-indicator)
+  laptop    this machine (kbfollow-sender + indicator in swaybar)
+  laptop2   ssh laptop2 (kbfollow-receiver + user kbfollow-indicator)
+  desktop   ssh desktop (kbfollow-receiver + user kbfollow-indicator)
   all       every host above (the default when no host is given)
 
 This script only controls services; it does not deploy code.
@@ -65,8 +65,8 @@ known_host() {
   host_field "$1" 1 >/dev/null 2>&1
 }
 
-# Same user-session preparation as tools/desktop-rescue.sh, so `systemctl --user`
-# works over a non-login ssh connection.
+# Export the user-session bus so `systemctl --user` works over a non-login ssh
+# connection.
 user_env_snippet() {
   cat <<'SNIPPET'
 XDG_RUNTIME_DIR="/run/user/$(id -u)"

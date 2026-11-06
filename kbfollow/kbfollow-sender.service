@@ -1,12 +1,12 @@
 [Unit]
-Description=Lanmouse receiver
+Description=Kbfollow sender
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/bin/python3 /usr/local/lib/lanmouse/lanmouse.py
+ExecStart=/usr/bin/python3 /usr/local/lib/kbfollow/kbfollow.py
 Restart=always
 RestartSec=2
 

@@ -76,7 +76,7 @@ Create `~/.config/lanclip-indicator/config.json` on each host:
   "labels": {
     "laptop": "Laptop",
     "desktop": "Desktop",
-    "laptop": "Laptop"
+    "laptop2": "Laptop2"
   }
 }
 ```
@@ -142,21 +142,21 @@ If the indicator logs `waiting for wayland display`, the session is not up (or t
 
 ## Managing services
 
-`tools/lanclip-ctl.sh` restarts and inspects the lanclip user units on every lanclip machine, so one command covers `laptop`, `laptop`, and `desktop`. Each `HOSTS` entry lists that host's units: `laptop` uses swaybar mode and runs only `lanclip`; `laptop` and `desktop` also run `lanclip-indicator`:
+`tools/lanclip-ctl.sh` restarts and inspects the lanclip user units on every lanclip machine, so one command covers `laptop`, `laptop2`, and `desktop`. Each `HOSTS` entry lists that host's units: `laptop` uses swaybar mode and runs only `lanclip`; `laptop2` and `desktop` also run `lanclip-indicator`:
 
 ```sh
 tools/lanclip-ctl.sh status all
-tools/lanclip-ctl.sh restart laptop
+tools/lanclip-ctl.sh restart laptop2
 tools/lanclip-ctl.sh logs desktop -n 20
 ```
 
-Hosts are reached through the `laptop` and `desktop` entries in `~/.ssh/config`. Both units are user units, so no `sudo` is involved. `systemctl --user` over ssh works because the script exports `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`. An unreachable host is reported without aborting the other hosts. The script only controls services; it does not deploy code.
+Hosts are reached through the `laptop2` and `desktop` entries in `~/.ssh/config`; edit the `HOSTS` array at the top of the script to match your machines. Both units are user units, so no `sudo` is involved. `systemctl --user` over ssh works because the script exports `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`. An unreachable host is reported without aborting the other hosts. The script only controls services; it does not deploy code.
 
 Add a shell alias to reach it from anywhere. For fish, create `~/.config/fish/functions/lc.fish`:
 
 ```fish
 function lc --description 'lanclip service control'
-    /home/user/projects/quality_of_life_setups/lanclip/tools/lanclip-ctl.sh $argv
+    /path/to/lan-tools/lanclip/tools/lanclip-ctl.sh $argv
 end
 ```
 

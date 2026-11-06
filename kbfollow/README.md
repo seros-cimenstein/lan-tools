@@ -1,11 +1,14 @@
-# lanmouse
+# kbfollow
 
-`lanmouse` is a small Linux LAN mouse-forwarding tool for one physical mouse.
-The keyboard decides where the mouse goes: when the Bluetooth keyboard profile
-is connected to `laptop`, `desktop`, or another receiver, that machine reports its
-keyboard presence to the sender and the sender forwards mouse events there.
-When the keyboard is local on the sender, the mouse is ungrabbed and behaves
-normally on the laptop.
+`kbfollow` ("keyboard follow") is a small Linux LAN mouse-forwarding tool for
+one physical mouse: the mouse follows whichever machine the Bluetooth keyboard
+is connected to. When the keyboard profile is connected to `laptop2`, `desktop`,
+or another receiver, that machine reports its keyboard presence to the sender
+and the sender forwards mouse events there. When the keyboard is local on the
+sender, the mouse is ungrabbed and behaves normally on the laptop.
+
+It was called `lanmouse` during development (older commits use that name); it
+is unrelated to the [lan-mouse](https://github.com/feschber/lan-mouse) project.
 
 The sender reads the physical evdev mouse, grabs it only while forwarding to a
 remote receiver, and streams safe mouse events over TCP. Receivers authenticate
@@ -26,10 +29,10 @@ mouse buttons on stream changes to avoid stuck buttons.
 
 Install:
 
-- `lanmouse.py` to `/usr/local/lib/lanmouse/lanmouse.py`
-- one systemd unit to `/etc/systemd/system/lanmouse-sender.service` or
-  `/etc/systemd/system/lanmouse-receiver.service`
-- config to `/etc/lanmouse/config.json`
+- `kbfollow.py` to `/usr/local/lib/kbfollow/kbfollow.py`
+- one systemd unit to `/etc/systemd/system/kbfollow-sender.service` or
+  `/etc/systemd/system/kbfollow-receiver.service`
+- config to `/etc/kbfollow/config.json`
 
 Both units run as root system services because evdev grabs and uinput require
 root or equivalent device permissions.
@@ -38,8 +41,8 @@ Enable one role per machine:
 
 ```sh
 systemctl daemon-reload
-systemctl enable --now lanmouse-sender.service
-systemctl enable --now lanmouse-receiver.service
+systemctl enable --now kbfollow-sender.service
+systemctl enable --now kbfollow-receiver.service
 ```
 
 ## Sender config
@@ -55,7 +58,7 @@ Example for the Arch laptop with the physical `Logitech M215` mouse:
   "mouse_match": ["Logitech M215", "LanPad pointer"],
   "control_port": 47701,
   "receivers": [
-    {"name": "laptop", "host": "laptop.local", "port": 47702},
+    {"name": "laptop2", "host": "laptop2.local", "port": 47702},
     {"name": "desktop", "host": "desktop.local", "port": 47702}
   ]
 }
@@ -64,7 +67,7 @@ Example for the Arch laptop with the physical `Logitech M215` mouse:
 Required common keys:
 
 - `role`: `sender` or `receiver`
-- `name`: this machine's lanmouse name
+- `name`: this machine's kbfollow name
 - `token`: shared secret used for HTTP and TCP authentication
 - `keyboard_match`: substring matched against `N: Name=` lines in
   `/proc/bus/input/devices`
@@ -81,12 +84,12 @@ Sender-only keys:
 
 ## Receiver config
 
-Example for `laptop`:
+Example for `laptop2`:
 
 ```json
 {
   "role": "receiver",
-  "name": "laptop",
+  "name": "laptop2",
   "token": "change-this-long-random-token",
   "keyboard_match": "Designer Compact Keyboard",
   "listen_port": 47702,
@@ -109,7 +112,7 @@ Open only the needed LAN paths:
 - receivers: allow TCP `47702` from the sender machine
 
 The TCP stream starts with the shared token and the HTTP control endpoint
-requires `X-Lanmouse-Token`, but the protocol is not encrypted. Use this only on
+requires `X-Kbfollow-Token`, but the protocol is not encrypted. Use this only on
 a trusted LAN or inside a private VPN.
 
 ## Manual checks
@@ -117,49 +120,50 @@ a trusted LAN or inside a private VPN.
 Status on the sender:
 
 ```sh
-curl -H 'X-Lanmouse-Token: change-this-long-random-token' \
+curl -H 'X-Kbfollow-Token: change-this-long-random-token' \
   http://127.0.0.1:47701/status
 ```
 
 Run in debug mode with a temporary config:
 
 ```sh
-python3 /usr/local/lib/lanmouse/lanmouse.py --config /etc/lanmouse/config.json --debug
+python3 /usr/local/lib/kbfollow/kbfollow.py --config /etc/kbfollow/config.json --debug
 ```
 
 ## Managing services
 
-`tools/lanmouse-ctl.sh` restarts and inspects the system unit and the
-indicator on every lanmouse machine, so one command covers `laptop`
-(sender), `laptop`, and `desktop` (receivers). The laptop's indicator runs inside
+`tools/kbfollow-ctl.sh` restarts and inspects the system unit and the
+indicator on every kbfollow machine, so one command covers `laptop`
+(sender), `laptop2`, and `desktop` (receivers). The laptop's indicator runs inside
 swaybar (see below), so the script only reports whether it is running and
 leaves restarting it to `swaymsg reload`:
 
 ```sh
-tools/lanmouse-ctl.sh status all
-tools/lanmouse-ctl.sh restart laptop
-tools/lanmouse-ctl.sh logs desktop -n 20
+tools/kbfollow-ctl.sh status all
+tools/kbfollow-ctl.sh restart laptop2
+tools/kbfollow-ctl.sh logs desktop -n 20
 ```
 
-Hosts are reached through the `laptop` and `desktop` entries in `~/.ssh/config`.
+Hosts are reached through the `laptop2` and `desktop` entries in `~/.ssh/config`;
+edit the `HOSTS` array at the top of the script to match your machines.
 Remote system units are restarted with `ssh -t` so `sudo` can prompt in the
 terminal, and an unreachable host is reported without aborting the other hosts.
 The script only controls services; it does not deploy code.
 
 Add a shell alias to reach it from anywhere. For fish, create
-`~/.config/fish/functions/lm.fish`:
+`~/.config/fish/functions/kf.fish`:
 
 ```fish
-function lm --description 'lanmouse service control'
-    /home/user/lanmouse/tools/lanmouse-ctl.sh $argv
+function kf --description 'kbfollow service control'
+    /path/to/lan-tools/kbfollow/tools/kbfollow-ctl.sh $argv
 end
 ```
 
-Then `lm status all`, `lm restart desktop`, and so on.
+Then `kf status all`, `kf restart desktop`, and so on.
 
 ## Indicator
 
-`lanmouse-indicator.py` is an optional per-host indicator. It polls the sender's
+`kbfollow-indicator.py` is an optional per-host indicator. It polls the sender's
 `/status` endpoint and shows which machine has the keyboard and mouse: green
 for this machine, gray for another target, and orange when the sender cannot
 be reached. By default it draws a small always-on-top pill at the top center of
@@ -168,20 +172,20 @@ the screen (GTK layer-shell on Wayland, Tk otherwise).
 Install it as a user service:
 
 ```sh
-mkdir -p ~/.local/lib/lanmouse-indicator ~/.config/systemd/user
-cp lanmouse-indicator.py ~/.local/lib/lanmouse-indicator/
-cp lanmouse-indicator.service ~/.config/systemd/user/
+mkdir -p ~/.local/lib/kbfollow-indicator ~/.config/systemd/user
+cp kbfollow-indicator.py ~/.local/lib/kbfollow-indicator/
+cp kbfollow-indicator.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now lanmouse-indicator.service
+systemctl --user enable --now kbfollow-indicator.service
 ```
 
-Config lives at `~/.config/lanmouse-indicator/config.json` unless `--config` is
+Config lives at `~/.config/kbfollow-indicator/config.json` unless `--config` is
 used:
 
 ```json
 {
-  "self": "laptop",
-  "status_url": "http://192.168.1.3:47701/status",
+  "self": "laptop2",
+  "status_url": "http://laptop.local:47701/status",
   "token": "change-this-long-random-token",
   "poll_interval": 1.0,
   "margin": 8,
@@ -202,14 +206,14 @@ since swaybar's `status_command` replaces the whole status line. Disable the
 overlay unit first:
 
 ```sh
-systemctl --user disable --now lanmouse-indicator.service
+systemctl --user disable --now kbfollow-indicator.service
 ```
 
 Alone in the bar:
 
 ```
 bar {
-    status_command python3 ~/.local/lib/lanmouse-indicator/lanmouse-indicator.py --swaybar --clock "'%Y-%m-%d %X'"
+    status_command python3 ~/.local/lib/kbfollow-indicator/kbfollow-indicator.py --swaybar --clock "'%Y-%m-%d %X'"
 }
 ```
 
@@ -228,7 +232,7 @@ install -m 755 tools/swaybar-merge.py ~/.local/bin/swaybar-merge
 #!/bin/sh
 # ~/.local/bin/sway-status
 exec "$HOME/.local/bin/swaybar-merge" \
-  "python3 $HOME/.local/lib/lanmouse-indicator/lanmouse-indicator.py --swaybar" \
+  "python3 $HOME/.local/lib/kbfollow-indicator/kbfollow-indicator.py --swaybar" \
   "python3 $HOME/.local/lib/lanclip-indicator/lanclip-indicator.py --swaybar --clock '%Y-%m-%d %X'"
 ```
 

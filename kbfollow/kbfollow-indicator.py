@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 
 
-DEFAULT_CONFIG = "~/.config/lanmouse-indicator/config.json"
+DEFAULT_CONFIG = "~/.config/kbfollow-indicator/config.json"
 HTTP_TIMEOUT = 2.0
 UI_POLL_MS = 200
 SIGNAL_TICK_MS = 100
@@ -201,7 +201,7 @@ def state_for_target(config: Config, target: str) -> IndicatorState:
 def fetch_target(config: Config) -> str:
     request = urllib.request.Request(
         config.status_url,
-        headers={"X-Lanmouse-Token": config.token},
+        headers={"X-Kbfollow-Token": config.token},
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
@@ -420,7 +420,7 @@ class GtkLayerIndicatorWindow:
         self.height = 30
 
         self.window = self.Gtk.Window()
-        self.window.set_title("lanmouse-indicator")
+        self.window.set_title("kbfollow-indicator")
         self.window.set_decorated(False)
         self.window.set_resizable(False)
         self.window.set_app_paintable(True)
@@ -433,7 +433,7 @@ class GtkLayerIndicatorWindow:
             self.window.set_visual(visual)
 
         self.GtkLayerShell.init_for_window(self.window)
-        self.GtkLayerShell.set_namespace(self.window, "lanmouse-indicator")
+        self.GtkLayerShell.set_namespace(self.window, "kbfollow-indicator")
         self.GtkLayerShell.set_layer(
             self.window,
             self.GtkLayerShell.Layer.OVERLAY,
@@ -601,7 +601,7 @@ def load_gtk_layer_backend() -> tuple[object, object, object, object] | None:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Show the current lanmouse keyboard/mouse target."
+        description="Show the current kbfollow keyboard/mouse target."
     )
     parser.add_argument(
         "--config",
@@ -642,7 +642,7 @@ def run(config: Config) -> int:
     poll_thread = threading.Thread(
         target=poll_status,
         args=(config, shared, stop_event),
-        name="lanmouse-indicator-poll",
+        name="kbfollow-indicator-poll",
         daemon=True,
     )
     poll_thread.start()
@@ -663,7 +663,7 @@ def run(config: Config) -> int:
 def swaybar_blocks(state: IndicatorState, clock_format: str | None) -> list[dict[str, str]]:
     blocks = [
         {
-            "name": "lanmouse",
+            "name": "kbfollow",
             "full_text": f"⌨ {state.text}",
             "color": BAR_COLORS[state.mode],
         }
@@ -682,7 +682,7 @@ def run_swaybar(config: Config, clock_format: str | None) -> int:
     poll_thread = threading.Thread(
         target=poll_status,
         args=(config, shared, stop_event),
-        name="lanmouse-indicator-poll",
+        name="kbfollow-indicator-poll",
         daemon=True,
     )
     poll_thread.start()
@@ -729,7 +729,7 @@ def run_gtk_layer(config: Config, backend: tuple[object, object, object, object]
     poll_thread = threading.Thread(
         target=poll_status,
         args=(config, shared, stop_event),
-        name="lanmouse-indicator-poll",
+        name="kbfollow-indicator-poll",
         daemon=True,
     )
     poll_thread.start()

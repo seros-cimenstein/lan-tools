@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
-CONFIG_PATH = "/etc/lanmouse/config.json"
+CONFIG_PATH = "/etc/kbfollow/config.json"
 DEFAULT_SETTLE_SECONDS = 0.05
 PRESENCE_ARBITER_INTERVAL = 0.01
 CONNECT_FAILSAFE_SECONDS = 3.0
@@ -58,7 +58,7 @@ WIRE_EVENT_SIZE = struct.calcsize(WIRE_EVENT_FORMAT)
 INPUT_EVENT_FORMAT = "llHHi"
 INPUT_EVENT_SIZE = struct.calcsize(INPUT_EVENT_FORMAT)
 
-UINPUT_NAME = "lanmouse virtual mouse"
+UINPUT_NAME = "kbfollow virtual mouse"
 UINPUT_MAX_NAME_SIZE = 80
 BUS_VIRTUAL = 0x06
 
@@ -315,7 +315,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         logging.debug("control %s - %s", self.client_address[0], fmt % args)
 
     def _authorized(self) -> bool:
-        supplied = self.headers.get("X-Lanmouse-Token", "")
+        supplied = self.headers.get("X-Kbfollow-Token", "")
         return hmac.compare_digest(supplied, self.server.token)
 
     def _send_json(self, status: int, body: dict[str, Any]) -> None:
@@ -1070,7 +1070,7 @@ class ReceiverKeyboardReporter(threading.Thread):
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(payload)),
-                "X-Lanmouse-Token": self.token,
+                "X-Kbfollow-Token": self.token,
             },
         )
         try:
