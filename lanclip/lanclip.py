@@ -587,7 +587,14 @@ def parse_positive_float(value: Any, label: str) -> float:
 
 
 def poll_clipboard(app: LanclipApp, stop_event: threading.Event) -> None:
-    primed = False
+    # Establish the startup baseline immediately. Waiting for the first poll
+    # would discard a copy made during that interval as pre-existing content.
+    initial_item = app.read_clipboard()
+    if initial_item is not None:
+        initial_mime, initial_data = initial_item
+        if initial_mime in SUPPORTED_MIMES:
+            app.state.mark_seen_if_changed(bytes_hash(initial_data))
+
     while not stop_event.wait(app.config.poll_interval):
         item = app.read_clipboard()
         if item is None:
@@ -598,12 +605,8 @@ def poll_clipboard(app: LanclipApp, stop_event: threading.Event) -> None:
             continue
         content_hash = bytes_hash(data)
 
-        if not primed:
-            app.state.mark_seen_if_changed(content_hash)
-            primed = True
-            continue
-
         changed, remote_hash = app.state.mark_seen_if_changed(content_hash)
+
         if not changed:
             continue
 
