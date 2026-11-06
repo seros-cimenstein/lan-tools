@@ -1,0 +1,11 @@
+[Unit]
+Description=grand_viewer - LAN machines dashboard on http://127.0.0.1:47800/
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/lib/grand_viewer/grand_viewer.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

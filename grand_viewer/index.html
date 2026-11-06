@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grand_viewer</title>
+<style>
+:root {
+  --bg: #0f1115; --panel: #171a21; --panel2: #1d212a; --line: #2a2f3a;
+  --fg: #e3e6ec; --muted: #8a92a3; --accent: #6ea8fe;
+  --ok: #3ecf8e; --info: #6ea8fe; --warn: #f0b429; --bad: #f2555a; --idle: #6b7280; --done: #58b3a6;
+  --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f4f5f7; --panel: #fff; --panel2: #f7f8fa; --line: #e1e4ea; --fg: #1d2330; --muted: #677084; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 10px 20px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0; letter-spacing: .3px; }
+header .spacer { flex: 1; }
+header input[type=search] { background: var(--panel); border: 1px solid var(--line); color: var(--fg); border-radius: 6px; padding: 6px 10px; width: 220px; }
+header label { color: var(--muted); user-select: none; cursor: pointer; }
+button { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer; font: inherit; }
+button:hover { border-color: var(--accent); }
+button.small { padding: 1px 8px; font-size: 12px; }
+main { padding: 16px 20px 60px; max-width: 1700px; margin: 0 auto; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* overview */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+.tile:hover { border-color: var(--accent); }
+.tile.down { border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
+.tile .top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tile .top b { font-size: 15px; }
+.tile .counts { margin-top: 8px; display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.meter { display: grid; grid-template-columns: 44px 1fr 92px; align-items: center; gap: 8px; font-size: 12.5px; margin: 3px 0; }
+.meter .lbl { color: var(--muted); }
+.meter .val { text-align: right; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.bar { height: 7px; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--ok); }
+.bar.warn > i { background: var(--warn); } .bar.bad > i { background: var(--bad); }
+
+/* status */
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; background: var(--idle); }
+.dot.ok, .dot.running { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.scheduled { background: var(--info); } .dot.done { background: var(--done); }
+.dot.busy, .dot.stale { background: var(--warn); } .dot.failed, .dot.down { background: var(--bad); box-shadow: 0 0 6px var(--bad); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 1px 8px 1px 6px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); white-space: nowrap; }
+.pill.failed { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.c-failed { color: var(--bad); } .c-running { color: var(--ok); } .c-scheduled { color: var(--info); } .c-stopped { color: var(--idle); } .c-busy { color: var(--warn); }
+
+/* host section */
+section.host { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 22px; overflow: hidden; }
+section.host > .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel2); }
+section.host > .head h2 { margin: 0; font-size: 18px; }
+section.host > .head .facts { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; }
+section.host > .head .facts b { color: var(--fg); font-weight: 500; }
+.banner { padding: 8px 16px; background: color-mix(in srgb, var(--bad) 14%, var(--panel)); color: var(--fg); border-bottom: 1px solid var(--line); font-size: 13px; }
+.body { display: grid; grid-template-columns: 300px 1fr; }
+.body > .side { padding: 14px 16px; border-right: 1px solid var(--line); }
+.body > .content { padding: 6px 0 10px; min-width: 0; }
+@media (max-width: 980px) { .body { grid-template-columns: 1fr; } .body > .side { border-right: 0; border-bottom: 1px solid var(--line); } }
+h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 14px 16px 6px; font-weight: 600; }
+.side h3 { margin: 4px 0 8px; }
+.side h3 ~ h3 { margin-top: 18px; }
+table.storage td.usage { width: 28%; min-width: 120px; vertical-align: middle; }
+table.storage td.indent { padding-left: 24px; }
+table.storage tr.drive td { background: var(--panel2); padding-top: 5px; padding-bottom: 5px; }
+/* disk usage browser */
+#duBody { flex: 1; overflow: auto; padding: 4px 0 10px; }
+#duBody .note { padding: 6px 14px; font-size: 12.5px; color: var(--muted); }
+#duBody .note.warn { color: var(--warn); }
+#duBody td.usage { width: 40%; vertical-align: middle; }
+#duBody tr.dir { cursor: pointer; }
+#duBody tr.dir td .name::after { content: " ›"; color: var(--muted); }
+.crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 6px 10px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--panel2); }
+td.num, th.num { text-align: right; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+td.grow { width: 100%; max-width: 0; }
+td .name, td .desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td .name { font-weight: 500; }
+td .desc { color: var(--muted); font-size: 12px; }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.port { font-family: var(--mono); font-size: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-right: 3px; white-space: nowrap; }
+.when { white-space: nowrap; font-size: 12.5px; }
+.hot { color: var(--warn); } .bad { color: var(--bad); }
+.wrap { overflow-x: auto; }
+details { margin: 4px 16px 0; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+details > .wrap { margin: 0 -16px; }
+th.sortable { cursor: pointer; user-select: none; } th.sortable:hover, th.sorted { color: var(--fg); }
+th .arrow { display: inline-block; width: 10px; font-size: 10px; opacity: .35; }
+th.sorted .arrow { opacity: 1; color: var(--accent); }
+td.io { font-family: var(--mono); font-size: 12px; white-space: nowrap; text-align: right; }
+td.io .z { color: var(--muted); }
+.iorow { display: grid; grid-template-columns: 44px 1fr; gap: 8px; font-size: 12.5px; margin: 3px 0; }
+.iorow .lbl { color: var(--muted); } .iorow .val { text-align: right; font-family: var(--mono); font-size: 12px; }
+.empty { color: var(--muted); padding: 6px 16px; font-size: 13px; }
+
+/* log viewer */
+dialog { width: min(1200px, 94vw); height: min(820px, 88vh); padding: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; }
+dialog::backdrop { background: rgba(0,0,0,.55); }
+dialog .dlg { display: flex; flex-direction: column; height: 100%; }
+dialog .bar2 { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+dialog .bar2 b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+dialog pre { flex: 1; margin: 0; padding: 12px 14px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>grand_viewer</h1>
+  <span id="status" class="muted"></span>
+  <span class="spacer"></span>
+  <input id="filter" type="search" placeholder="Filter projects…" autocomplete="off">
+  <label><input id="showStopped" type="checkbox"> show stopped</label>
+  <button id="refresh" title="Poll every host now">Refresh now</button>
+</header>
+<main id="main"><p class="muted">Loading…</p></main>
+
+<dialog id="logs">
+  <div class="dlg">
+    <div class="bar2">
+      <b id="logTitle"></b>
+      <select id="logLines"><option>100</option><option selected>300</option><option>1000</option><option>2000</option></select>
+      <button id="logReload">Reload</button>
+      <button id="logClose">Close</button>
+    </div>
+    <pre id="logText"></pre>
+  </div>
+</dialog>
+
+<dialog id="du">
+  <div class="dlg">
+    <div class="bar2">
+      <b id="duTitle" class="crumbs"></b>
+      <button id="duRescan" title="Scan this folder again">Rescan</button>
+      <button id="duClose">Close</button>
+    </div>
+    <div id="duBody"></div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { data: null, sort: JSON.parse(localStorage.gvSort || "{}"), open: new Set(), log: null };
+$("showStopped").checked = localStorage.gvShowStopped === "1";
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = (v) => v == null ? "–" : (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%";
+
+function bytes(n) {
+  if (n == null) return "–";
+  const u = ["B", "K", "M", "G", "T", "P"];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (n >= 100 || i === 0 ? n.toFixed(0) : n.toFixed(1)) + u[i];
+}
+
+function dur(s) {
+  if (s == null || !isFinite(s)) return "–";
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d) return d + "d " + (h % 24) + "h";
+  if (h) return h + "h " + (m % 60) + "m";
+  return m + "m";
+}
+
+function level(p, warn, bad) { return p >= bad ? "bad" : p >= warn ? "warn" : ""; }
+
+function meter(label, p, val, warn = 75, bad = 90) {
+  const w = p == null ? 0 : Math.min(100, Math.max(0, p));
+  return `<div class="meter"><span class="lbl">${label}</span>
+    <div class="bar ${p == null ? "" : level(p, warn, bad)}"><i style="width:${w}%"></i></div>
+    <span class="val">${val}</span></div>`;
+}
+
+// Remote timestamps are converted with the remote clock (snapshot "time"), so
+// clock skew between machines never shows up as bogus ages.
+function clockFor(host, nowHub) {
+  const d = host.data;
+  return d ? d.time + (nowHub - host.fetched_at) : nowHub;
+}
+
+function hostStatus(h) {
+  if (!h.data) return h.error ? "down" : "busy";
+  return h.error ? "stale" : "ok";
+}
+
+function projectWhen(p, now) {
+  const t = p.timer;
+  switch (p.status) {
+    case "running":
+      return p.active_since ? `up ${dur(now - p.active_since)}` : "running";
+    case "done":
+      return p.active_since ? `ran ${dur(now - p.active_since)} ago` : "done";
+    case "scheduled": {
+      const parts = [];
+      if (t && t.next_run) parts.push(`next in ${dur(t.next_run - now)}`);
+      const last = p.last_exit || (t && t.last_trigger);
+      if (last) parts.push(`last ${dur(now - last)} ago`);
+      return parts.join(" · ") || "waiting";
+    }
+    case "failed": {
+      const since = p.inactive_since || p.last_exit;
+      let s = since ? `failed ${dur(now - since)} ago` : "failed";
+      if (p.result && p.result !== "success") s += ` (${p.result}${p.exit_status ? " " + p.exit_status : ""})`;
+      if (t && t.next_run) s += ` · retry in ${dur(t.next_run - now)}`;
+      return s;
+    }
+    case "busy":
+      return p.active;
+    default:
+      return p.inactive_since ? `stopped ${dur(now - p.inactive_since)} ago` : "never started";
+  }
+}
+
+const STATUS_ORDER = { failed: 0, busy: 1, running: 2, scheduled: 3, done: 4, stopped: 5 };
+
+// ------------------------------------------------------------ sortable tables
+// Each table kind (projects, containers, processes) has one sort choice shared by
+// every host. A column's `first` is the direction of its first click (numbers
+// largest-first, text A–Z); clicking the sorted column again flips it. Empty
+// values always sort last.
+const sum2 = (v) => (v ? v[0] + v[1] : null);
+
+function sortRows(table, rows, cols, def) {
+  const s = state.sort[table] && cols[state.sort[table].col] ? state.sort[table] : def;
+  const col = cols[s.col], dir = s.dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const x = col.key(a), y = col.key(b);
+    if (x == null || y == null) return (x == null) - (y == null);
+    const c = typeof x === "string" ? x.localeCompare(y) : x - y;
+    return c * dir || (col.tie ? col.tie(a, b) : 0);
+  });
+}
+
+function sortHead(table, cols, def) {
+  const s = state.sort[table] && cols[state.sort[table].col] ? state.sort[table] : def;
+  return `<thead><tr>${Object.entries(cols).map(([name, c]) => {
+    if (!c.key) return `<th class="${c.cls || ""}">${c.label}</th>`;
+    const on = s.col === name;
+    return `<th class="sortable ${c.cls || ""} ${on ? "sorted" : ""}" data-sort-table="${table}" data-sort-col="${name}"
+      title="${esc(c.title || "Sort by " + c.label)}">${c.label} <span class="arrow">${on ? (s.dir === "asc" ? "▲" : "▼") : "↕"}</span></th>`;
+  }).join("")}</tr></thead>`;
+}
+
+function clickSort(table, col) {
+  const cols = TABLES[table], cur = state.sort[table];
+  state.sort[table] = cur && cur.col === col
+    ? { col, dir: cur.dir === "asc" ? "desc" : "asc" }
+    : { col, dir: cols[col].first || "desc" };
+  localStorage.gvSort = JSON.stringify(state.sort);
+  render();
+}
+
+function cpuCell(v, cpus, show = true) {
+  if (!show || v == null) return `<td class="num"></td>`;
+  return `<td class="num ${v >= 50 ? "hot" : ""}" title="${(v * cpus / 100).toFixed(2)} of ${cpus} cores">${pct(v)}</td>`;
+}
+
+// Disk: read/write bytes per second; network: received/sent.
+function ioCell(v, a, b, what) {
+  if (!v) return `<td class="io"></td>`;
+  const part = (x) => x >= 1 ? bytes(x) : `<span class="z">0</span>`;
+  return `<td class="io" title="${what[0]} ${bytes(v[0])}/s · ${what[1]} ${bytes(v[1])}/s">${a} ${part(v[0])} ${b} ${part(v[1])}</td>`;
+}
+const diskCell = (v) => ioCell(v, "r", "w", ["read", "written"]);
+const netCell = (v) => ioCell(v, "↓", "↑", ["received", "sent"]);
+
+const isLive = (p) => p.status === "running" || p.status === "busy";
+const whenKey = (p) => isLive(p) ? p.active_since
+  : p.status === "scheduled" ? p.timer && p.timer.next_run
+  : p.inactive_since || p.last_exit;
+const containerClass = (c) => c.state === "running" ? "running"
+  // Exit 0 and 143 (SIGTERM from `docker stop`) are clean stops; any other code is a failure.
+  : (/Exited \((?!(0|143)\))/.test(c.status) || c.state === "dead") ? "failed"
+  : c.state === "restarting" ? "busy" : "stopped";
+
+const DISK_TITLE = "Disk read (r) and write (w) per second; click to sort by the total";
+const NET_TITLE = "Network received (↓) and sent (↑) per second, TCP only (UDP/QUIC is not counted per project); click to sort by the total";
+const TABLES = {
+  projects: {
+    status: { label: "Status", key: (p) => STATUS_ORDER[p.status], first: "asc", tie: (a, b) => a.id.localeCompare(b.id) },
+    name: { label: "Project", key: (p) => p.id, first: "asc" },
+    when: { label: "When", key: whenKey, title: "Sort by start time (running), next run (scheduled) or when it stopped" },
+    cpu: { label: "CPU", cls: "num", key: (p) => isLive(p) ? p.cpu_pct : null, title: "Share of the whole machine (all cores)" },
+    mem: { label: "Mem", cls: "num", key: (p) => p.memory },
+    disk: { label: "Disk I/O", cls: "num", key: (p) => sum2(p.disk), title: DISK_TITLE },
+    net: { label: "Network", cls: "num", key: (p) => sum2(p.net), title: NET_TITLE },
+    rst: { label: "Rst", cls: "num", key: (p) => p.restarts || null, title: "Automatic restarts" },
+    ports: { label: "Ports", key: (p) => p.ports.length ? p.ports[0].port : null, first: "asc" },
+    logs: { label: "" },
+  },
+  containers: {
+    status: { label: "Status", key: (c) => STATUS_ORDER[containerClass(c)], first: "asc", tie: (a, b) => (a.project + a.name).localeCompare(b.project + b.name) },
+    name: { label: "Container", key: (c) => c.name, first: "asc" },
+    state: { label: "State", key: (c) => c.status, first: "asc" },
+    cpu: { label: "CPU", cls: "num", key: (c) => c.state === "running" ? c.cpu_pct : null, title: "Share of the whole machine (all cores)" },
+    mem: { label: "Mem", cls: "num", key: (c) => c.state === "running" ? c.memory : null },
+    disk: { label: "Disk I/O", cls: "num", key: (c) => sum2(c.disk), title: DISK_TITLE },
+    net: { label: "Network", cls: "num", key: (c) => sum2(c.net), title: NET_TITLE.replace(", TCP only (UDP/QUIC is not counted per project)", "") },
+    ports: { label: "Ports", key: (c) => c.ports || null, first: "asc" },
+    logs: { label: "" },
+  },
+  processes: {
+    pid: { label: "PID", cls: "num", key: (p) => p.pid, first: "asc" },
+    name: { label: "Process", key: (p) => p.name, first: "asc" },
+    user: { label: "User", key: (p) => p.user, first: "asc" },
+    cpu: { label: "CPU", cls: "num", key: (p) => p.cpu_pct, title: "Share of the whole machine (all cores)" },
+    mem: { label: "RSS", cls: "num", key: (p) => p.rss },
+    disk: { label: "Disk I/O", cls: "num", key: (p) => sum2(p.disk), title: DISK_TITLE + " (only readable for your own processes)" },
+  },
+};
+const DEFAULT_SORT = { projects: { col: "status", dir: "asc" }, containers: { col: "status", dir: "asc" }, processes: { col: "cpu", dir: "desc" } };
+
+function matches(text) {
+  const f = $("filter").value.trim().toLowerCase();
+  return !f || text.toLowerCase().includes(f);
+}
+
+function counts(projects, containers) {
+  const c = { running: 0, scheduled: 0, failed: 0, stopped: 0 };
+  for (const p of projects) {
+    if (p.status === "running" || p.status === "busy" || p.status === "done") c.running++;
+    else c[p.status]++;
+  }
+  for (const k of containers || []) k.state === "running" ? c.running++ : c.stopped++;
+  return c;
+}
+
+function tile(h, now) {
+  const st = hostStatus(h), d = h.data;
+  let body = `<div class="muted">${esc(h.error || "connecting…")}</div>`;
+  if (d) {
+    const mem = d.memory, memUsed = mem.total - mem.available;
+    const worst = d.disks.filter((x) => x.size).sort((a, b) => b.used / (b.used + b.avail) - a.used / (a.used + a.avail))[0];
+    const c = counts(d.projects, d.containers);
+    body = meter("CPU", d.cpu_pct, `${pct(d.cpu_pct)} · load ${d.load[0].toFixed(2)}`)
+      + meter("Mem", 100 * memUsed / mem.total, `${bytes(memUsed)}/${bytes(mem.total)}`)
+      + (worst ? meter("Disk", 100 * worst.used / (worst.used + worst.avail), `${pct(100 * worst.used / (worst.used + worst.avail))} ${esc(worst.mount)}`, 80, 90) : "")
+      + `<div class="counts">
+          <span class="c-running">● ${c.running} running</span>
+          ${c.scheduled ? `<span class="c-scheduled">● ${c.scheduled} scheduled</span>` : ""}
+          ${c.failed ? `<span class="c-failed">● ${c.failed} failed</span>` : ""}
+          ${d.failed.length ? `<span class="c-busy">⚠ ${d.failed.length} system unit${d.failed.length > 1 ? "s" : ""} failed</span>` : ""}
+          ${d.temp != null ? `<span class="${d.temp >= 80 ? "bad" : d.temp >= 70 ? "hot" : "muted"}">${d.temp.toFixed(0)}°C</span>` : ""}
+        </div>`;
+  }
+  return `<div class="tile ${st === "down" ? "down" : ""}" data-jump="${esc(h.name)}">
+    <div class="top"><span class="dot ${st}"></span><b>${esc(h.name)}</b>
+      <span class="muted">${d ? esc(d.os) : ""}</span></div>${body}</div>`;
+}
+
+function projectRows(h, now) {
+  const d = h.data, showStopped = $("showStopped").checked;
+  const rows = sortRows("projects", d.projects
+    .filter((p) => (showStopped || p.status !== "stopped") && matches(p.id + " " + p.description)),
+    TABLES.projects, DEFAULT_SORT.projects);
+  const hidden = d.projects.filter((p) => p.status === "stopped").length;
+  if (!rows.length) return `<div class="empty">No matching projects${!showStopped && hidden ? ` (${hidden} stopped hidden)` : ""}.</div>`;
+  return `<div class="wrap"><table>
+    ${sortHead("projects", TABLES.projects, DEFAULT_SORT.projects)}
+    <tbody>${rows.map((p) => `<tr>
+      <td><span class="pill ${p.status === "failed" ? "failed" : ""}"><span class="dot ${p.status}"></span>${p.status}</span></td>
+      <td class="grow"><div class="name">${esc(p.id.replace(/\.service$/, ""))} <span class="tag">${p.scope}</span>${p.timer ? ` <span class="tag" title="${esc(p.timer.id)}">timer</span>` : ""}</div>
+          <div class="desc" title="${esc(p.description)}">${esc(p.description)}</div></td>
+      <td class="when">${esc(projectWhen(p, now))}</td>
+      ${cpuCell(p.cpu_pct, d.cpus, isLive(p))}
+      <td class="num">${p.memory != null ? (p.memory_rss ? "≈" : "") + bytes(p.memory) : ""}</td>
+      ${diskCell(p.disk)}
+      ${netCell(p.net)}
+      <td class="num ${p.restarts ? "hot" : ""}">${p.restarts || ""}</td>
+      <td>${p.ports.map((x) => `<span class="port" title="${esc(x.addr)}">${x.port}</span>`).join("")}</td>
+      <td><button class="small" data-log="unit" data-host="${esc(h.name)}" data-scope="${p.scope}" data-name="${esc(p.id)}">logs</button></td>
+    </tr>`).join("")}</tbody></table></div>
+    ${!showStopped && hidden ? `<div class="empty">${hidden} stopped project${hidden > 1 ? "s" : ""} hidden.</div>` : ""}`;
+}
+
+function containerRows(h) {
+  const d = h.data;
+  if (d.containers === null) return "";
+  if (d.docker_error) return `<h3>Docker</h3><div class="empty">${esc(d.docker_error)}</div>`;
+  const showStopped = $("showStopped").checked;
+  const list = sortRows("containers", d.containers.filter((c) => (showStopped || c.state === "running") && matches(c.name + " " + c.image + " " + c.project)),
+    TABLES.containers, DEFAULT_SORT.containers);
+  const hidden = d.containers.filter((c) => c.state !== "running").length;
+  // Nothing to show: no containers, or a filter that matches none of them.
+  if (!d.containers.length || (!list.length && $("filter").value.trim())) return "";
+  const cls = containerClass;
+  return `<h3>Docker containers</h3>${list.length ? `<div class="wrap"><table>
+    ${sortHead("containers", TABLES.containers, DEFAULT_SORT.containers)}
+    <tbody>${list.map((c) => `<tr>
+      <td><span class="pill ${cls(c) === "failed" ? "failed" : ""}"><span class="dot ${cls(c)}"></span>${esc(c.state)}</span></td>
+      <td class="grow"><div class="name">${esc(c.name)}${c.project ? ` <span class="tag">${esc(c.project)}</span>` : ""}</div>
+          <div class="desc" title="${esc(c.image)}">${esc(c.image.startsWith("sha256:") ? c.image.slice(0, 19) : c.image)}</div></td>
+      <td class="when">${esc(c.status)}</td>
+      ${cpuCell(c.cpu_pct, d.cpus, c.state === "running")}
+      <td class="num">${c.memory != null && c.state === "running" ? (c.memory_rss ? "≈" : "") + bytes(c.memory) : ""}</td>
+      ${diskCell(c.disk)}
+      ${netCell(c.net)}
+      <td class="mono">${esc(c.ports)}</td>
+      <td><button class="small" data-log="container" data-host="${esc(h.name)}" data-scope="" data-name="${esc(c.name)}">logs</button></td>
+    </tr>`).join("")}</tbody></table></div>` : ""}
+    ${!showStopped && hidden ? `<div class="empty">${hidden} stopped container${hidden > 1 ? "s" : ""} hidden.</div>` : ""}`;
+}
+
+function failedRows(h) {
+  const f = h.data.failed;
+  if (!f.length) return "";
+  return `<h3>Failed system units</h3><div class="wrap"><table><tbody>${f.map((u) => `<tr>
+    <td style="width:1%"><span class="pill failed"><span class="dot failed"></span>failed</span></td>
+    <td><span class="name">${esc(u.id)}</span> <span class="tag">${u.scope}</span> <span class="muted">${esc(u.description)}</span></td>
+    <td style="width:1%"><button class="small" data-log="unit" data-host="${esc(h.name)}" data-scope="${u.scope}" data-name="${esc(u.id)}">logs</button></td>
+  </tr>`).join("")}</tbody></table></div>`;
+}
+
+function processRows(h) {
+  const d = h.data;
+  const list = sortRows("processes", d.processes, TABLES.processes, DEFAULT_SORT.processes).slice(0, 15);
+  const id = "proc:" + h.name;
+  return `<details data-key="${esc(id)}" ${state.open.has(id) ? "open" : ""}><summary>Top processes (${d.process_count} total)</summary><div class="wrap"><table>
+    ${sortHead("processes", TABLES.processes, DEFAULT_SORT.processes)}
+    <tbody>${list.map((p) => `<tr><td class="num">${p.pid}</td><td>${esc(p.name)}</td><td class="muted">${esc(p.user)}</td>
+      ${cpuCell(p.cpu_pct, d.cpus)}<td class="num">${bytes(p.rss)}</td>${diskCell(p.disk)}</tr>`).join("")}</tbody>
+  </table></div></details>`;
+}
+
+function otherPorts(h) {
+  const ports = h.data.other_ports;
+  if (!ports.length) return "";
+  const id = "ports:" + h.name;
+  const seen = new Set();
+  const rows = ports.filter((p) => { const k = p.addr + ":" + p.port; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a.port - b.port);
+  return `<details data-key="${esc(id)}" ${state.open.has(id) ? "open" : ""}><summary>Other listening ports (${rows.length})</summary><div class="wrap"><table>
+    <thead><tr><th class="num">Port</th><th>Address</th><th>Process</th></tr></thead>
+    <tbody>${rows.map((p) => `<tr><td class="num">${p.port}</td><td class="mono">${esc(p.addr)}</td><td>${p.process ? esc(p.process) + ` <span class="muted">(${p.pid})</span>` : `<span class="muted">other user</span>`}</td></tr>`).join("")}</tbody>
+  </table></div></details>`;
+}
+
+// Drives (lsblk) with their partitions, joined to filesystem usage (statvfs) by
+// mount point; mounted filesystems that sit on no listed drive (network shares,
+// fuse) follow under "Other filesystems".
+function storageRows(h) {
+  const d = h.data;
+  const byMount = new Map(d.disks.map((x) => [x.mount, x]));
+  const shown = new Set();
+  const fsCells = (x) => {
+    if (!x) return `<td colspan="5"></td>`;
+    if (!x.size) return `<td colspan="5" class="bad">${esc(x.error || "unavailable")}</td>`;
+    const p = 100 * x.used / (x.used + x.avail), lv = level(p, 80, 90);
+    return `<td class="usage"><div class="bar ${lv}"><i style="width:${p}%"></i></div></td>
+      <td class="num ${lv === "bad" ? "bad" : lv === "warn" ? "hot" : ""}">${pct(p)}</td>
+      <td class="num">${bytes(x.used)}</td><td class="num">${bytes(x.avail)}</td>
+      <td class="num ${x.inodes_pct >= 90 ? "bad" : x.inodes_pct >= 80 ? "hot" : ""}">${x.inodes_pct == null ? "" : pct(x.inodes_pct)}</td>`;
+  };
+  const analyze = (x) => x && x.size
+    ? `<button class="small" data-du="${esc(x.mount)}" data-host="${esc(h.name)}" title="What is using the space on ${esc(x.mount)}">analyze</button>` : "";
+  const partRow = (part, indent) => {
+    const x = part.mount ? byMount.get(part.mount) : null;
+    if (x) shown.add(x.mount);
+    const where = x ? `<span class="name">${esc(x.mount)}</span>`
+      : part.swap ? `<span class="muted">swap</span>`
+      : `<span class="muted">not mounted</span>`;
+    return `<tr><td class="${indent ? "indent" : ""}"><span class="mono">${esc(part.name)}</span>${part.label ? ` <span class="tag">${esc(part.label)}</span>` : ""}</td>
+      <td>${where}</td><td class="muted">${esc(part.fstype || "")}</td><td class="num">${bytes(x ? x.size : part.size)}</td>
+      ${fsCells(x)}<td>${analyze(x)}</td></tr>`;
+  };
+  let rows = "";
+  for (const drv of d.storage || []) {
+    const kind = [drv.tran ? drv.tran.toUpperCase() : "", drv.rotational ? "HDD" : drv.tran === "usb" || drv.removable ? "" : "SSD",
+      drv.removable ? "removable" : ""].filter(Boolean).join(" · ");
+    const allocated = drv.parts.reduce((s, p) => s + (p.type === "part" ? p.size : 0), 0);
+    const free = drv.parts.some((p) => p.type === "part") ? drv.size - allocated : 0;
+    rows += `<tr class="drive"><td colspan="10"><span class="name">${esc(drv.model || drv.name)}</span>
+      <span class="muted"> ${esc(drv.name)} · ${drv.size ? bytes(drv.size) : "no media"}${kind ? " · " + esc(kind) : ""}${free > drv.size * 0.01 && free > 1 << 30 ? ` · ${bytes(free)} unpartitioned` : ""}</span></td></tr>`;
+    rows += drv.parts.map((p) => partRow(p, true)).join("");
+  }
+  const other = d.disks.filter((x) => !shown.has(x.mount));
+  if (other.length) {
+    if (d.storage && d.storage.length) rows += `<tr class="drive"><td colspan="10"><span class="name">Other filesystems</span></td></tr>`;
+    rows += other.map((x) => `<tr><td class="${d.storage && d.storage.length ? "indent" : ""}"><span class="mono" title="${esc(x.device)}">${esc(x.device.replace(/^\/dev\//, ""))}</span></td>
+      <td><span class="name">${esc(x.mount)}</span></td><td class="muted">${esc(x.fs)}</td><td class="num">${bytes(x.size)}</td>
+      ${fsCells(x)}<td>${analyze(x)}</td></tr>`).join("");
+  }
+  return `<h3>Storage</h3><div class="wrap"><table class="storage">
+    <thead><tr><th>Device</th><th>Mounted at</th><th>FS</th><th class="num">Size</th><th>Usage</th><th class="num"></th>
+      <th class="num">Used</th><th class="num">Free</th><th class="num" title="Inodes in use">Inodes</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function hostSection(h, nowHub) {
+  const st = hostStatus(h), d = h.data;
+  const updated = h.fetched_at ? `${dur(nowHub - h.fetched_at)} ago` : "never";
+  let banner = "";
+  if (h.error) banner = `<div class="banner">${d ? `Unreachable — showing data from ${updated}. ` : ""}${esc(h.error)}</div>`;
+  if (!d) return `<section class="host" id="host-${esc(h.name)}"><div class="head"><span class="dot ${st}"></span><h2>${esc(h.name)}</h2>
+    <span class="muted">${h.polling ? "polling…" : ""}</span></div>${banner}</section>`;
+  const now = clockFor(h, nowHub), mem = d.memory, memUsed = mem.total - mem.available;
+  const swapUsed = mem.swap_total - mem.swap_free;
+  return `<section class="host" id="host-${esc(h.name)}">
+    <div class="head"><span class="dot ${st}"></span><h2>${esc(h.name)}</h2>
+      <div class="facts">
+        <span><b>${esc(d.user)}@${esc(d.hostname)}</b> via ${esc(h.route || "–")}</span>
+        <span>${esc(d.os)} · ${esc(d.arch)} · ${esc(d.kernel)}</span>
+        <span>up <b>${dur(d.uptime)}</b></span>
+        <span>updated <b>${updated}</b>${h.polling ? " · polling…" : ""}</span>
+      </div></div>
+    ${banner}
+    <div class="body">
+      <div class="side">
+        <h3>System</h3>
+        ${meter("CPU", d.cpu_pct, `${pct(d.cpu_pct)} · ${d.cpus} cores`)}
+        ${meter("Load", 100 * d.load[0] / d.cpus, d.load.map((x) => x.toFixed(2)).join(" "), 70, 100)}
+        ${meter("Mem", 100 * memUsed / mem.total, `${bytes(memUsed)}/${bytes(mem.total)}`)}
+        ${mem.swap_total ? meter("Swap", 100 * swapUsed / mem.swap_total, `${bytes(swapUsed)}/${bytes(mem.swap_total)}`, 50, 80) : ""}
+        ${d.temp != null ? meter("Temp", d.temp, `${d.temp.toFixed(1)}°C`, 70, 80) : ""}
+        <div class="iorow" title="Physical disks, read / written per second"><span class="lbl">Disk</span>
+          <span class="val">${d.disk_io ? `r ${bytes(d.disk_io[0])}/s · w ${bytes(d.disk_io[1])}/s` : "–"}</span></div>
+        <div class="iorow" title="Physical network interfaces, received / sent per second"><span class="lbl">Net</span>
+          <span class="val">${d.net_io ? `↓ ${bytes(d.net_io[0])}/s · ↑ ${bytes(d.net_io[1])}/s` : "–"}</span></div>
+      </div>
+      <div class="content">
+        ${storageRows(h)}
+        <h3>Projects</h3>
+        ${projectRows(h, now)}
+        ${containerRows(h)}
+        ${failedRows(h)}
+        ${processRows(h)}
+        ${otherPorts(h)}
+      </div>
+    </div></section>`;
+}
+
+function render() {
+  const s = state.data;
+  if (!s) return;
+  const nowHub = Date.now() / 1000 - state.skew;
+  let failed = 0, down = 0;
+  for (const h of s.hosts) {
+    if (!h.data || h.error) down++;
+    if (h.data) failed += h.data.projects.filter((p) => p.status === "failed").length;
+  }
+  document.title = (failed || down ? `(${failed + down}) ` : "") + "grand_viewer";
+  $("status").textContent = `${s.hosts.length - down}/${s.hosts.length} hosts up · polling every ${s.interval}s`
+    + (failed ? ` · ${failed} failed project${failed > 1 ? "s" : ""}` : "");
+  $("main").innerHTML = `<div class="tiles">${s.hosts.map((h) => tile(h, nowHub)).join("")}</div>`
+    + s.hosts.map((h) => hostSection(h, nowHub)).join("");
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    const s = await r.json();
+    if (!r.ok) throw new Error(s.error || r.status);
+    state.skew = Date.now() / 1000 - s.now;  // browser vs hub clock
+    state.data = s;
+    render();
+  } catch (e) {
+    $("status").textContent = "hub unreachable: " + e.message;
+  }
+}
+
+// ------------------------------------------------------------------ events
+$("main").addEventListener("click", (e) => {
+  const log = e.target.closest("[data-log]");
+  if (log) return openLog({ host: log.dataset.host, kind: log.dataset.log, scope: log.dataset.scope, name: log.dataset.name });
+  const du = e.target.closest("[data-du]");
+  if (du) return openDu(du.dataset.host, du.dataset.du);
+  const sort = e.target.closest("[data-sort-col]");
+  if (sort) return clickSort(sort.dataset.sortTable, sort.dataset.sortCol);
+  const jump = e.target.closest("[data-jump]");
+  if (jump) document.getElementById("host-" + jump.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+$("main").addEventListener("toggle", (e) => {
+  const k = e.target.dataset?.key;
+  if (k) e.target.open ? state.open.add(k) : state.open.delete(k);
+}, true);
+$("filter").addEventListener("input", render);
+$("showStopped").addEventListener("change", () => { localStorage.gvShowStopped = $("showStopped").checked ? "1" : "0"; render(); });
+$("refresh").addEventListener("click", async () => {
+  await fetch("/api/refresh", { method: "POST" });
+  $("status").textContent = "refreshing…";
+  setTimeout(load, 1500);
+});
+
+async function openLog(spec) {
+  state.log = spec;
+  $("logTitle").textContent = `${spec.host} · ${spec.name}`;
+  if (!$("logs").open) $("logs").showModal();
+  $("logText").textContent = "loading…";
+  const q = new URLSearchParams({ ...spec, lines: $("logLines").value });
+  try {
+    const r = await fetch("/api/logs?" + q);
+    const j = await r.json();
+    $("logText").textContent = r.ok ? (j.text || "(no log lines)") : "error: " + j.error;
+  } catch (e) {
+    $("logText").textContent = "error: " + e.message;
+  }
+  $("logText").scrollTop = $("logText").scrollHeight;
+}
+$("logReload").addEventListener("click", () => state.log && openLog(state.log));
+$("logLines").addEventListener("change", () => state.log && openLog(state.log));
+$("logClose").addEventListener("click", () => $("logs").close());
+
+// ------------------------------------------------------------- disk usage
+// The hub runs `du` one level deep on the host, in the background; finished
+// scans are cached there, so revisiting a folder is instant until "Rescan".
+const DU_ROWS = 300;
+const hostByName = (name) => state.data && state.data.hosts.find((h) => h.name === name);
+const joinPath = (dir, name) => (dir === "/" ? "" : dir) + "/" + name;
+
+async function duFetch(spec, method) {
+  const r = await fetch("/api/du?" + new URLSearchParams({ host: spec.host, path: spec.path }), { method });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+
+async function openDu(host, path, rescan = false) {
+  clearTimeout(state.duTimer);
+  const spec = state.du = { host, path };
+  if (!$("du").open) $("du").showModal();
+  renderDu(spec, { state: "loading" });
+  try {
+    let rec = await duFetch(spec, rescan ? "POST" : "GET");
+    if (rec.state === "none") rec = await duFetch(spec, "POST");
+    if (state.du === spec) showDu(spec, rec);
+  } catch (e) {
+    if (state.du === spec) renderDu(spec, { state: "error", error: e.message });
+  }
+}
+
+function showDu(spec, rec) {
+  spec.path = rec.path;  // as normalized by the hub
+  renderDu(spec, rec);
+  if (rec.state !== "running") return;
+  state.duTimer = setTimeout(async () => {
+    if (!$("du").open || state.du !== spec) return;
+    try {
+      const next = await duFetch(spec, "GET");
+      if (state.du === spec) showDu(spec, next);
+    } catch (e) {
+      if (state.du === spec) renderDu(spec, { state: "error", error: e.message });
+    }
+  }, 1500);
+}
+
+function renderDu(spec, rec) {
+  const parts = spec.path.split("/").filter(Boolean);
+  let acc = "";
+  const crumbs = [parts.length ? `<a data-du-path="/">/</a>` : "<span>/</span>"];
+  parts.forEach((p, i) => {
+    acc += "/" + p;
+    crumbs.push(i === parts.length - 1 ? `<span>${esc(p)}</span>` : `<a data-du-path="${esc(acc)}">${esc(p)}</a>`);
+  });
+  $("duTitle").innerHTML = `<span class="muted">${esc(spec.host)}:</span> ${crumbs.join(` <span class="muted">›</span> `)}`;
+
+  const now = Date.now() / 1000 - (state.skew || 0);
+  const body = $("duBody");
+  if (rec.state === "loading") { body.innerHTML = `<div class="note">loading…</div>`; return; }
+  if (rec.state === "error") { body.innerHTML = `<div class="note bad">${esc(rec.error)}</div>`; return; }
+  if (rec.state === "running") {
+    body.innerHTML = `<div class="note">Scanning ${esc(spec.path)}… ${dur(now - rec.started)} so far. A whole disk can take a minute or more; you can close this and come back.</div>`;
+    return;
+  }
+
+  const res = rec.result, h = hostByName(spec.host), d = h && h.data;
+  const mounts = new Map((d ? d.disks : []).map((x) => [x.mount, x]));
+  const notes = [`<div class="note"><b>${bytes(res.total)}</b> in ${esc(spec.path)} · scanned ${dur(now - rec.finished)} ago (took ${dur(rec.finished - rec.started)})</div>`];
+  if (res.errors) {
+    notes.push(`<div class="note warn" title="${esc(res.error_sample.join("\n"))}">⚠ ${res.errors} item${res.errors > 1 ? "s" : ""} could not be read as ${esc(d ? d.user : "the ssh user")}: their size is missing, so real usage is higher.</div>`);
+  }
+  const fs = mounts.get(spec.path);
+  if (fs && fs.used) {
+    const missing = fs.used - res.total;
+    if (missing > Math.max(fs.used * 0.02, 256 * 2 ** 20)) {
+      notes.push(`<div class="note warn">≈${bytes(missing)} of the ${bytes(fs.used)} used on this filesystem is not in any folder below: unreadable folders, reserved blocks, or deleted files still held open by a process.</div>`);
+    }
+  }
+  const rows = res.entries.slice(0, DU_ROWS).map((e) => {
+    const full = joinPath(spec.path, e.name), p = res.total ? 100 * e.size / res.total : 0;
+    const otherFs = e.dir && mounts.has(full) && full !== spec.path;
+    const open = e.dir && e.addressable;
+    return `<tr class="${open ? "dir" : ""}" ${open ? `data-du-path="${esc(full)}"` : ""}>
+      <td class="usage"><div class="bar"><i style="width:${p}%"></i></div></td>
+      <td class="num">${pct(p)}</td><td class="num">${bytes(e.size)}</td>
+      <td class="grow"><div class="name">${e.dir ? "📁 " : ""}${esc(e.name)}${otherFs ? ` <span class="tag">separate filesystem</span>` : ""}</div></td></tr>`;
+  });
+  const rest = res.entries.slice(DU_ROWS);
+  body.innerHTML = notes.join("") + (res.entries.length
+    ? `<table><tbody>${rows.join("")}</tbody></table>`
+      + (rest.length ? `<div class="note">${rest.length} more items, ${bytes(rest.reduce((s, e) => s + e.size, 0))} together.</div>` : "")
+    : `<div class="note">Empty folder.</div>`);
+}
+
+for (const id of ["duTitle", "duBody"]) {
+  $(id).addEventListener("click", (e) => {
+    const t = e.target.closest("[data-du-path]");
+    if (t && state.du) openDu(state.du.host, t.dataset.duPath);
+  });
+}
+$("duRescan").addEventListener("click", () => state.du && openDu(state.du.host, state.du.path, true));
+$("duClose").addEventListener("click", () => $("du").close());
+$("du").addEventListener("close", () => clearTimeout(state.duTimer));
+
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>
