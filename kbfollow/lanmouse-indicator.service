@@ -1,0 +1,16 @@
+[Unit]
+Description=lanmouse on-screen keyboard/mouse location indicator
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/lib/lanmouse-indicator/lanmouse-indicator.py
+Restart=on-failure
+RestartSec=3
+# X11 hosts:
+#Environment=DISPLAY=:0
+#Environment=XAUTHORITY=%h/.Xauthority
+# Sway/XWayland host:
+#Environment=DISPLAY=:0
+
+[Install]
+WantedBy=default.target
